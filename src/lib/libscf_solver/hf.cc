@@ -31,6 +31,8 @@
 #include <vector>
 #include <utility>
 
+#include <sys/time.h>
+
 #include <libmints/mints.h>
 
 #include <libfunctional/superfunctional.h>
@@ -448,10 +450,17 @@ void HF::integrals()
         jk_->set_omega(functional->x_omega());
     }
 
+    struct timeval tv1;
+    struct timeval tv2;
+    gettimeofday(&tv1, NULL);
     // Initialize
     jk_->initialize();
     // Print the header
     jk_->print_header();
+    gettimeofday(&tv2, NULL);
+    double timespent = (tv2.tv_sec - tv1.tv_sec) +
+            (tv2.tv_usec - tv1.tv_usec) / 1000.0 / 1000.0;
+    outfile->Printf("JK initialization took %f seconds.\n", timespent);
 }
 
 double HF::compute_energy()
@@ -1870,8 +1879,16 @@ void HF::iterations()
 
         E_ = 0.0;
 
+        struct timeval tv1;
+        struct timeval tv2;
+        double timespent;
         timer_on("Form G");
+        gettimeofday(&tv1, NULL);
         form_G();
+        gettimeofday(&tv2, NULL);
+        timespent = (tv2.tv_sec - tv1.tv_sec) +
+                (tv2.tv_usec - tv1.tv_usec) / 1000.0 / 1000.0;
+        outfile->Printf("Forming G took %f seconds.\n", timespent);
         timer_off("Form G");
 
         // Reset fractional SAD occupation

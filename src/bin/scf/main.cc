@@ -26,6 +26,8 @@
 #include <cstdio>
 #include <string>
 
+#include <sys/time.h>
+
 #include <psifiles.h>
 #include <libciomr/libciomr.h>
 #include <libpsio/psio.h>
@@ -103,7 +105,15 @@ PsiReturnType scf(Options & options, PyObject* pre, PyObject* post)
     if (post)
         scf->add_postiteration_callback(post);
 
+    struct timeval tv1, tv2;
+    double timespent;
+
+    gettimeofday(&tv1, NULL);
     energy = scf->compute_energy();
+    gettimeofday(&tv2, NULL);
+    timespent = (tv2.tv_sec - tv1.tv_sec) +
+            (tv2.tv_usec - tv1.tv_usec) / 1000.0 / 1000.0;
+    outfile->Printf("Total SCF compute energy time is %f \n.", timespent);
 
 
     // Print a molden file
