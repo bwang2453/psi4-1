@@ -35,6 +35,7 @@
 #include "direct_screening.h"
 #include "cubature.h"
 #include "points.h"
+#include "yoshimine.h"
 
 #include<lib3index/cholesky.h>
 
@@ -85,10 +86,6 @@ void PKJK::preiterations()
 {
     psio_ = _default_psio_lib_;
 
-//    bool file_was_open = psio_->open_check(pk_file_);
-//    if(!file_was_open);
-        psio_->open(pk_file_, PSIO_OPEN_NEW);
-
     // Start by generating conventional integrals on disk
     boost::shared_ptr<MintsHelper> mints(new MintsHelper());
     mints->integrals();
@@ -131,6 +128,7 @@ void PKJK::preiterations()
     // Compute the number of pairs in PK
     pk_size_ = INDEX2(pk_pairs_-1, pk_pairs_-1) + 1;
 
+    // I still have to figure out why this piece of code exists.
     // Count the pairs
     size_t npairs = 0;
     size_t *pairpi = new size_t[nirreps];
@@ -152,6 +150,90 @@ void PKJK::preiterations()
             }
         }
     }
+
+    // We need to access the option object to just get a few values
+
+    Options& options = Process::environment.options;
+    /* Now we create the Yoshimine buffers for sorting. The PK supermatrix
+     containing integrals (ij|kl) has all indices ij on the rows and indices
+     kl on the columns. We need both the supermatrix for building the Coulomb
+     matrix J and the exchange matrix K. For J, integrals must be sorted so
+     that (ij|kl) goes to position (ij, kl) of the supermatrix. However, for K
+     we want (ij|kl) to go in both (ik, jl) and (il, jk) in the supermatrix (not
+     considering special cases for diagonal elements). As a result, we need
+     to sort integrals in different files for J and K. For this purpose, we are going
+     to use two Yoshimine buffers. They should each be initialized with half of the
+     available memory, because they will be used simultaneously for the pre-sorting.
+     */
+
+    // Use a Yoshimine sorting, with objects adapted from TRANSQT implementation
+    // of Yoshimine.
+
+    struct transqt::yoshimine YBuffJ;
+    struct transqt::yoshimine YBuffK;
+    int max_buckets = options.get_int("MAX_BUCKETS");
+    unsigned int bra_indices = pk_pairs_;
+
+    // TODO Caution: right now, Yoshimine initialization assumes all rs
+    // for a given pq, whereas we know we have pq >= rs here. We need
+    // to optimize that !
+
+    unsigned int ket_indices = pk_pairs_;
+
+    // Initialize each buffer with only half of the memory. memory_ is in doubles
+    // and already has a safety factor.
+    long pk_memory = memory_ / 2;
+
+    // First temporary file for pre-sorting.
+    int first_tmp_file_J = options.get_int("FIRST_TMP_FILE");
+
+    // Integral tolerance
+    double tolerance = options.get_double("INTS_TOLERANCE");
+
+    outfile->Printf("There are %i bra_indices, %i ket_indices\n", bra_indices, ket_indices);
+    outfile->Printf("The pk_memory is %i doubles, there are %i max_buckets\n", pk_memory, max_buckets);
+    outfile->Printf("The first tmp file is %i and the integral tolerance %f\n", first_tmp_file_J, tolerance);
+    transqt::yosh_init(&YBuffJ, bra_indices, ket_indices, pk_memory * sizeof(double), pk_memory,
+                      max_buckets, first_tmp_file_J, tolerance, "outfile");
+    int first_tmp_file_K = first_tmp_file_J + YBuffJ.nbuckets;
+    outfile->Printf("The first tmp K file is %i \n", first_tmp_file_K);
+    transqt::yosh_init(&YBuffK, bra_indices, ket_indices, pk_memory * sizeof(double), pk_memory,
+                      max_buckets, first_tmp_file_K, tolerance, "outfile");
+
+    transqt::yosh_print(&YBuffJ, "outfile");
+    transqt::yosh_print(&YBuffK, "outfile");
+
+    // Initiate buckets: allocate array memory and open temporary files.
+
+    transqt::yosh_init_buckets(&YBuffJ);
+    transqt::yosh_init_buckets(&YBuffK);
+
+    // We need the stupid ioff array.
+
+    int *ioff = new int[pk_size_];
+    ioff[0] = 0;
+    for(int i = 1; i < pk_size_; ++i) {
+        ioff[i] = ioff[i - 1] + i;
+    }
+
+   //Do the pre-sorting step in temporary files
+
+    transqt::yosh_rdtwo_pk(&YBuffJ,&YBuffK,PSIF_SO_TEI, 0, sopi, nirreps,ioff, (debug_ > 5));
+
+    // Close the buckets, but keep the temp. files.
+    transqt::yosh_close_buckets(&YBuffJ, 0);
+    transqt::yosh_close_buckets(&YBuffK, 0);
+
+    // Really proceed with the sorting and writing of the PK files
+
+    transqt::yosh_sort_pk(YBuffJ, 0, pk_file_, 0, ioff, nso, pk_size, nso, (debug_ > 5));
+
+    delete [] ioff;
+
+
+//    bool file_was_open = psio_->open_check(pk_file_);
+//    if(!file_was_open);
+        psio_->open(pk_file_, PSIO_OPEN_NEW);
 
     // TODO figure out a better scheme.  For now, use half of the memory
     // 32 comes from 2 (use only half the mem) * 8 (bytes per double)

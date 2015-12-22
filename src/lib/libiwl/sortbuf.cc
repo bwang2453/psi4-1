@@ -278,7 +278,7 @@ void IWL::sort_buffer(IWL *Inbuf, IWL *Outbuf,
 ** Returns: none
 **
 ** Revised 6/27/96 by CDS for new IWL format
-** N.B. Now need to iwl_flush the output buffer...not done in here!!
+** N.B. No need to iwl_flush the output buffer...not done in here!!
 ** \ingroup IWL
 */
 void sortbuf(struct iwlbuf *Inbuf, struct iwlbuf *Outbuf,

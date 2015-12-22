@@ -105,6 +105,7 @@ void yosh_init(struct yoshimine *YBuff, unsigned bra_indices,
    twoel_array_size = bra_indices; twoel_array_size *= ket_indices;
    YBuff->core_loads = (twoel_array_size - 1) / maxcord + 1 ;
    nbuckets = YBuff->core_loads ;
+   outfile->Printf("nbuckets is %i\n", nbuckets );
    YBuff->nbuckets = nbuckets;
    YBuff->cutoff = cutoff;
    YBuff->bra_indices = bra_indices;
@@ -131,6 +132,7 @@ void yosh_init(struct yoshimine *YBuff, unsigned bra_indices,
    }
    else
       bytes_per_bucket = (unsigned long int) (maxcor / nbuckets);
+   outfile->Printf("There are %i bytes per buckets\n", bytes_per_bucket);
 
    free_bytes_per_bucket = bytes_per_bucket -
      (unsigned long int) (sizeof(struct iwlbuf) + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
@@ -508,6 +510,183 @@ void yosh_rdtwo(struct yoshimine *YBuff, int itapERI, int del_tei_file, int *num
    */
   for (i=0; i<YBuff->nbuckets; i++) {
     flush_bucket((YBuff->buckets)+i, 1);
+  }
+
+  free(nsoff);
+
+  iwl_buf_close(&ERIIN, !del_tei_file);
+}
+
+/*
+** YOSH_RDTWO_PK() : Read two-electron integrals from
+**    file33 (in IWL format) and prepare them for Yoshimine sorting
+**    for PK integrals.
+**
+**    We need to sort Coulomb using ij indices, but exchange using
+**    ik and il indices, thus we need two Yoshimine objects, and we
+**    write to two sets of temporary files, while only reading the
+**    integral file once.
+**
+** Arguments:
+**   YBuffJ       = Yoshimine object pointer for Coulomb integrals
+**   YBuffK       = Yoshimine object pointer for exchange integrals
+**   itapERI      = unit number for two el. file (33)
+**   num_so       = array of number of symm orbs in each irrep (for reindex)
+**   nirreps      = number of irreps
+**   ioff         = standard lexical index array
+**   del_tei_file = 1 to delete the tei file (33), 0 otherwise
+**   printflag    = 1 for printing (for debugging only!) else 0
+*/
+void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapERI,
+      int del_tei_file, int *num_so, int nirreps, int *ioff, int printflag)
+{
+  int ilsti, nbuf;
+  int i, ij, kl, ijkl;
+  int ik, jl, ikjl, il, jk, iljk;
+  int iabs, jabs, kabs, labs ;
+  double value;
+  int *tmp;
+  struct bucket *bptr_J, *bptr_K1, *bptr_K2 ;
+  long int tmpi_J, tmpi_K1, tmpi_K2;
+  int whichbucket_J, whichbucket_K1, whichbucket_K2, firstfile_J, firstfile_K;
+  int *nsoff;
+  int fi;
+  struct iwlbuf ERIIN;
+
+  if (printflag) {
+    outfile->Printf( "Yoshimine rdtwo routine entered\n");
+    outfile->Printf( "Two-electron integrals from file%d:\n",itapERI);
+  }
+
+  firstfile_J = YBuffJ->first_tmp_file;
+  firstfile_K = YBuffK->first_tmp_file;
+
+  iwl_buf_init(&ERIIN,itapERI,0.0,1,1);
+
+  nsoff = init_int_array(nirreps);
+  nsoff[0] = 0;
+  for (i=1; i<nirreps; i++) {
+    nsoff[i] = nsoff[i-1] + num_so[i-1];
+  }
+
+  do {
+    /* read a buffer full */
+    ilsti = ERIIN.lastbuf;
+    nbuf = ERIIN.inbuf;
+
+    fi = 0;
+    for (i=0; i < nbuf ; i++,tmp += 2) { /* do funky stuff to unpack ints */
+      iabs = abs(ERIIN.labels[fi]);
+      jabs = ERIIN.labels[fi+1];
+      kabs = ERIIN.labels[fi+2];
+      labs = ERIIN.labels[fi+3];
+      value = ERIIN.values[i];
+      fi += 4;
+
+      /* calculate ijkl lexical index */
+      ij = ioff[iabs] + jabs;
+      kl = ioff[kabs] + labs;
+      // TODO: Do we need ijkl??
+      ijkl = ioff[ij] + kl;
+
+      /* Calculate ikjl lexical index */
+      ik = ioff[iabs] + kabs;
+      jl = ioff[jabs] + labs;
+      ikjl = ioff[ik] + jl;
+
+      /* Calculate iljk lexical index */
+      il = ioff[iabs] + labs;
+      jk = ioff[jabs] + kabs;
+      iljk = ioff[il] + jk;
+
+      /* figure out what bucket to put it in, and do so
+       */
+
+      whichbucket_J = YBuffJ->bucket_for_pq[ij] ;
+      whichbucket_K1 = YBuffK->bucket_for_pq[ik] ;
+      whichbucket_K2 = YBuffK->bucket_for_pq[il] ;
+
+      bptr_J= YBuffJ->buckets + whichbucket_J ;
+      tmpi_J = (bptr_J->in_bucket)++ ;
+      bptr_K1= YBuffK->buckets + whichbucket_K1 ;
+      tmpi_K1 = (bptr_K1->in_bucket)++ ;
+      bptr_K2= YBuffK->buckets + whichbucket_K2 ;
+      tmpi_K2 = (bptr_K2->in_bucket)++ ;
+
+      // Fill the Coulomb bucket
+      bptr_J->p[tmpi_J] = iabs;
+      bptr_J->q[tmpi_J] = jabs;
+      bptr_J->r[tmpi_J] = kabs;
+      bptr_J->s[tmpi_J] = labs;
+
+      bptr_J->val[tmpi_J] = value;
+
+      // Fill the first exchange bucket.
+      // BEWARE: we switch indices around, this allow us to use
+      // the same code for J and K later
+      bptr_K1->p[tmpi_K1] = iabs;
+      bptr_K1->q[tmpi_K1] = kabs;
+      bptr_K1->r[tmpi_K1] = jabs;
+      bptr_K1->s[tmpi_K1] = labs;
+
+      bptr_K1->val[tmpi_K1] = value;
+
+      //Fill the second exchange bucket only if needed
+      //if(ikjl == iljk) {
+      //    outfile->Printf("We should skip\n");
+      //} else {
+      //    outfile->Printf("We should not skip\n");
+      //}
+      if(iabs != jabs && kabs != labs) {
+          outfile->Printf("We do not skip\n");
+          bptr_K2->p[tmpi_K2] = iabs;
+          bptr_K2->q[tmpi_K2] = labs;
+          bptr_K2->r[tmpi_K2] = jabs;
+          bptr_K2->s[tmpi_K2] = kabs;
+
+          bptr_K2->val[tmpi_K2] = value;
+      } else {
+          outfile->Printf("We skip.\n");
+      }
+
+      if (printflag)
+        outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
+                iabs, jabs, kabs, labs, ijkl, value) ;
+      if ((tmpi_J+1) == YBuffJ->bucketsize) { /* need to flush bucket to disk */
+        flush_bucket(bptr_J, 0);
+        bptr_J->in_bucket = 0;
+      }
+      if ((tmpi_K1+1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+        flush_bucket(bptr_K1, 0);
+        bptr_K1->in_bucket = 0;
+      }
+      if ((tmpi_K2+1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+        flush_bucket(bptr_K2, 0);
+        bptr_K2->in_bucket = 0;
+      }
+
+    }
+    if (!ilsti)
+      iwl_buf_fetch(&ERIIN);
+  } while(!ilsti);
+
+  /* flush partially filled buckets */
+  // TODO: For PK, we never use matrix so we could fix that.
+  /* Ok, after "matrix" was added above, we ran into the possibility of
+   * flushing TWO buffers with the lastflag set.  This would be bad,
+   * because the second buffer would never be read.  Therefore, I have
+   * always passed a lastflag of 0 to flush_bucket() in the code above,
+   * and now I flush all buckets here with lastflag set to 1.  There
+   * is a small possibility that I will write a buffer of all zeroes.
+   * This should not actually cause a problem, the way the iwl buf reads
+   * currently work.  Make sure to be careful if rewriting iwl routines!
+   */
+  for (i=0; i<YBuffJ->nbuckets; i++) {
+    flush_bucket((YBuffJ->buckets)+i, 1);
+  }
+
+  for (i=0; i<YBuffK->nbuckets; i++) {
+    flush_bucket((YBuffJ->buckets)+i, 1);
   }
 
   free(nsoff);
@@ -1330,6 +1509,76 @@ void yosh_sort(struct yoshimine *YBuff, int out_tape, int keep_bins,
    iwl_buf_close(&outbuf, 1);
    free(twoel_ints);
 }
+
+/*
+** YOSH_SORT_PK(): Sort all the buckets in the Yoshimine sorting algorithm.
+**    The call to sortbuf_pk() will cause the intermediate files to be
+**    deleted unless keep_bins is set to 1.
+**    The sorting for Coulomb and exchange integrals is not exactly the same, thus the
+**    flag is_exch has to be set to true for the exchange matrix.
+**    The integrals are ordered as ij >= kl; i >= j and k >= l, with appropriate
+**    factors for diagonal elements. In addition, integrals are written directly
+**    to the PK file without labels.
+**
+** Arguments:
+**    YBuff        =  pointer to Yoshimine object
+**    is_exch      =  flag set to true if we are sorting for
+**                    the exchange matrix
+**    out_tape     =  number for binary output file
+**    keep_bins    =  keep the intermediate tmp files
+**    ioff         =  the usual offset array
+**    nbfso        =  number of basis fns in symmetry orbitals
+**    ket_indices  =  number of ket indices (usually ntri)
+**    qdim         =  the number of possible values for index q
+**    print_lvl    =  verbosity level (how much to print)
+**    outfile      =  text output file
+**
+** Returns: none
+*/
+void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_bins,
+      int *ioff, int nbfso, int ket_indices, int qdim, int print_lvl)
+{
+   double *twoel_ints;
+   int i, max_pq;
+   struct iwlbuf inbuf, outbuf;
+
+   /* may be slightly more than pq_per_bucket pq's in each bucket
+    * if the pq's didn't divide evenly among the buckets.  The remainder
+    * will go to the last bucket.
+    */
+   max_pq = YBuff->buckets[YBuff->core_loads-1].hi -
+            YBuff->buckets[YBuff->core_loads-1].lo
+            + 1;
+
+   twoel_ints = init_array(max_pq * ket_indices) ;
+   iwl_buf_init(&outbuf, out_tape, YBuff->cutoff, 0, 0);
+
+   for (i=0; i<YBuff->core_loads-1; i++) {
+      if (print_lvl > 1) outfile->Printf( "Sorting bin %d\n", i+1);
+      iwl_buf_init(&inbuf, YBuff->first_tmp_file+i, YBuff->cutoff, 1, 0);
+      sortbuf_pk(&inbuf, &outbuf, twoel_ints, (YBuff->buckets)[i].lo,
+              (YBuff->buckets)[i].hi, ioff, ioff2, nbfso, elbert,
+               intermediate, no_pq_perm, qdim, add, (print_lvl > 4), "outfile");
+      zero_arr(twoel_ints, max_pq * ket_indices);
+      /* zero_arr(twoel_ints, YBuff->pq_per_bucket * YBuff->bra_indices); */
+      iwl_buf_close(&inbuf, keep_bins);
+      }
+
+
+   if (print_lvl > 1) outfile->Printf( "Sorting bin %d\n", i+1) ;
+   iwl_buf_init(&inbuf, YBuff->first_tmp_file+i, YBuff->cutoff, 1, 0);
+   sortbuf(&inbuf, &outbuf, twoel_ints, (YBuff->buckets)[i].lo,
+           (YBuff->buckets)[i].hi, ioff, ioff2, nbfso, elbert,
+           intermediate, no_pq_perm, qdim, add, (print_lvl > 4), "outfile");
+   iwl_buf_close(&inbuf, keep_bins);
+
+   if (print_lvl > 1) outfile->Printf( "Done sorting.\n");
+
+   iwl_buf_flush(&outbuf, 1);
+   iwl_buf_close(&outbuf, 1);
+   free(twoel_ints);
+}
+
 
 
 /*
