@@ -472,5 +472,126 @@ void sortbuf(struct iwlbuf *Inbuf, struct iwlbuf *Outbuf,
    
 }
 
+/*!
+** sortbuf_pk()
+**
+** Function reads a file of two-electron integrals into
+** core and writes them back out again in canonical order.  Used in
+** Yoshimine PK sort where we have a file containing a few value of pq
+** and all corresponding rs <= pq. We sort to make sure orbitals are
+** directly readable to form Coulomb and exchange matrices, thus with
+** pq >= rs, p >= q and r >= s. In addition, diagonal elements are
+** multiplied by the appropriate factors.
+** The integrals are written to the PK file directly, in the relevant
+** entry, without labels.
+**
+** One interesting issue here is that the intermediate array ('ints')
+** must be big enough to hold the integrals in the current buffer, but
+** we don't generally want it to be much larger than necessary!  Thus
+** we calculate an 'offset' which is the canonical index of the first
+** integral in the buffer, and we use this so that the first integral
+** in the buffer is stored in ints[0].
+**
+**    \param Inbuf       = IWL buffer for input
+**    \param out_tape    = PK file number for output
+**    \param is_exch     = 0 if we are sorting Coulomb, otherwise 1
+**    \param ints        = array to hold integrals in
+**    \param fpq         = first pq for this tape
+**    \param lpq         = last pq for this tape
+**    \param ioff        = offset array for the left indices
+**    \param num_so      = number of basis functions per irrep
+**    \param qdim        = dimensions for the q index...nvirt for MP2
+**    \param printflg    = 1 for printing, 0 otherwise
+**    \param out     = output file pointer
+**
+** Returns: none
+**
+** N.B. No need to iwl_flush the output buffer...not done in here!!
+** \ingroup IWL
+*/
+void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
+      double *ints, int fpq, int lpq, int *ioff,
+      int printflg, std::string out)
+{
+   int i;
+   Value *valptr;              /* array of integral values */
+   Label *lblptr;              /* array of integral labels */
+   int idx;                    /* index for curr integral (0..ints_per_buf) */
+   int lastbuf;                /* last buffer flag */
+   int pabs, qabs, rabs, sabs, pq, rs;
+   int prel, qrel, rrel, srel, psym, qsym, rsym, ssym;
+   long int pqrs, offset;
+
+   boost::shared_ptr<psi::PsiOutStream> printer=(out=="outfile"?outfile:
+            boost::shared_ptr<OutFile>(new OutFile(out)));
+
+   if (printflg) {
+     printer->Printf( "\nsortbuf_pk for pq=%d to %d\n", fpq, lpq);
+   }
+
+   // Compute the index of the lowest pq for offset
+
+   offset = ioff[fpq];
+
+   lblptr = Inbuf->labels;
+   valptr = Inbuf->values;
+
+   /* Read all integrals from a bucket file,
+    * one buffer at a time until we're done
+      We sort them upon reading in the twoel array */
+
+   do {
+      iwl_buf_fetch(Inbuf);
+      lastbuf = Inbuf->lastbuf;
+      for (idx=4*Inbuf->idx; Inbuf->idx<Inbuf->inbuf; Inbuf->idx++) {
+          pabs = (int) lblptr[idx++];
+          qabs = (int) lblptr[idx++];
+          rabs = (int) lblptr[idx++];
+          sabs = (int) lblptr[idx++];
+
+          // Temporary, for C1
+
+          prel = pabs;
+          qrel = qabs;
+          rrel = rabs;
+          srel = sabs;
+
+          psym = 0;
+          qsym = 0;
+          rsym = 0;
+          ssym = 0;
+
+          if (!is_exch) {
+
+             if ((psym == qsym) && (rsym == ssym)) {
+                 pq = ioff[MAX0(pabs, qabs)] + MIN0(pabs, qabs);
+                 rs = ioff[MAX0(rabs, sabs)] + MIN0(rabs, sabs);
+                 pqrs = ioff[MAX0(pq, rs)] + MIN0(pq,rs);
+                 //if (printflg && ints[pqrs-offset] != 0.0)
+                 //   printer->Printf( "Adding %10.6f to el %d %d %d %d = %10.6f\n",
+                 //           valptr[Inbuf->idx], pabs, qabs, rabs, sabs, ints[pqrs-offset]);
+                 ints[pqrs - offset] += valptr[Inbuf->idx];
+             }
+
+          }
+
+
+          if (printflg)
+            printer->Printf( "<%d %d %d %d | %d %d [%ld] = %10.6f\n",
+                pabs, qabs, rabs, sabs, pq, rs, pqrs, ints[pqrs-offset]) ;
+      }
+   } while (!lastbuf);
+
+   for(pq = fpq; pq <= lpq; ++pq) {
+       pqrs = ioff[pq] + pq;
+       ints[pqrs - offset] *= 0.5;
+   }
+
+   outfile->Printf("Final pqrs value %i\n", pqrs);
+   /* That's all we do here. The integral array is now ready
+    * to be written in the appropriate file. */
+
+}
+
 }
 

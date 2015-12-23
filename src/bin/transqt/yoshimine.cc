@@ -44,10 +44,14 @@
 #include <libciomr/libciomr.h>
 #include <libqt/qt.h>
 #include <libiwl/iwl.h>
+#include <libpsio/psio.hpp>
+#include <libpsio/psio.h>
 #include <psifiles.h>
 #define YEXTERN
 #include "yoshimine.h"
 #include "MOInfo.h"
+
+#include <boost/shared_ptr.hpp>
 
 namespace psi { namespace transqt {
 
@@ -159,6 +163,105 @@ void yosh_init(struct yoshimine *YBuff, unsigned bra_indices,
    YBuff->buckets[i].hi = bra_indices - 1;
 }
 
+/*
+** YOSH_INIT_PK(): This function initializes a Yoshimine sort object for
+**                 sorting PK integrals.
+**    The data is contained in a structure YBuff.
+**
+** Parameters:
+**    YBuff          =  pointer to struct which will hold data for the object
+**    bra_indices    =  the number of bra_index pairs for the two-electron
+**                      integrals being sorted
+**    maxcor         =  the core memory, in bytes
+**    maxcord        =  the core memory, in doubles
+**    max_buckets    =  the max number of buckets to use (may be limited due
+**                      to the fact that each bucket requires a consecutively
+**                      numbered binary temp file).
+**    first_tmp_file =  the number of the first tmp file used in the
+**                      Yoshimine sort (e.g. 80 for file80).
+**    cutoff         =  minimum value to be kept for any value during the sort
+**    outfile        =  the text output file
+**
+** Returns: none
+**
+** Note:  bra_indices indicates the number of pq pairs. In PK integrals, we know
+** that we have pq >= rs, p >= q and r >= s. YBuff contains buckets with
+** varying numbers of pq indices to take into account this triangular structure.
+*/
+void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
+               long maxcor, long maxcord, const int max_buckets,
+               unsigned int first_tmp_file,
+               double cutoff, std::string OutFileRMR)
+{
+   unsigned long long int twoel_array_size;              /*--- Although on 32-bit systems one can only allocate 2GB arrays
+                                                           in 1 process space, one can store much bigger integrals files on disk ---*/
+   unsigned int nbuckets;
+   int i, j, pq;
+   unsigned long int bytes_per_bucket, free_bytes_per_bucket;
+
+   YBuff->first_tmp_file = first_tmp_file;
+   twoel_array_size = bra_indices * (bra_indices + 1) / 2;
+   YBuff->core_loads = (twoel_array_size - 1) / maxcord + 1 ;
+   nbuckets = YBuff->core_loads ;
+   outfile->Printf("nbuckets is %i\n", nbuckets );
+   YBuff->nbuckets = nbuckets;
+   YBuff->cutoff = cutoff;
+   YBuff->bra_indices = bra_indices;
+   // -1 because this should not be used here.
+   YBuff->ket_indices = -1;
+   if (nbuckets > max_buckets) {
+      outfile->Printf( "(yosh_init): maximum number of buckets exceeded\n") ;
+      outfile->Printf( "(yosh_init): maximum number of buckets exceeded\n") ;
+      outfile->Printf( "   wanted %d buckets\n", nbuckets) ;
+      tstop() ;
+      exit(PSI_RETURN_FAILURE) ;
+      }
+
+   if (nbuckets == 1) {
+      bytes_per_bucket = ((unsigned long int) (4*sizeof(int) + sizeof(double))) *
+       ((unsigned long int) twoel_array_size) + (unsigned long int) (sizeof(struct iwlbuf)
+       + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
+    if (bytes_per_bucket > (unsigned long int) (maxcor/nbuckets))
+      bytes_per_bucket = (unsigned long int) (maxcor / nbuckets);
+   }
+   else
+      bytes_per_bucket = (unsigned long int) (maxcor / nbuckets);
+   outfile->Printf("There are %i bytes per buckets\n", bytes_per_bucket);
+
+   free_bytes_per_bucket = bytes_per_bucket -
+     (unsigned long int) (sizeof(struct iwlbuf) + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
+   YBuff->bucketsize = free_bytes_per_bucket / (4 * sizeof(int) +
+      sizeof(double));
+   YBuff->buckets = (struct bucket *) malloc(nbuckets * sizeof(struct bucket));
+   YBuff->bucket_for_pq = (int *) malloc (bra_indices * sizeof(int));
+
+   /* Now we determine which buckets have which pq indices. Since we have
+    * integrals in triangular form, low pq indices have very few rs indices,
+    * thus buckets will have varying numbers of pq indices to handle.
+    */
+   // pq_per_bucket should not be used here.
+   YBuff->pq_per_bucket = -1;
+
+   unsigned long long int pq_incore = 0;
+   i = 0;
+   YBuff->buckets[i].lo = 0;
+   YBuff->buckets[i].in_bucket = 0;
+   for(unsigned pq = 0; pq < bra_indices; ++pq) {
+       // Increment counters
+       if(pq_incore + pq + 1 > maxcord) {
+           //The batch is full. Save info.
+           YBuff->buckets[i++].hi = pq - 1;
+           YBuff->buckets[i].in_bucket = 0;
+           YBuff->buckets[i].lo = pq;
+           pq_incore = 0;
+       }
+       YBuff->bucket_for_pq[pq] = i;
+       pq_incore += pq + 1;
+   }
+   YBuff->buckets[i].hi = bra_indices - 1;
+
+}
+
 /* YOSH_DONE(): Free allocated memory and reset all options for a
 ** given Yoshimine sorting structure.
 */
@@ -205,6 +308,12 @@ void yosh_print(struct yoshimine *YBuff, std::string OutFileRMR)
    outfile->Printf( "\tcore loads = %10d\n", YBuff->core_loads) ;
    outfile->Printf( "\tpq/bin     = %10d\n", YBuff->pq_per_bucket) ;
    outfile->Printf( "\tcutoff     = %10.2E\n", YBuff->cutoff) ;
+   outfile->Printf( " Structure for each bucket:\n");
+   for(int i = 0; i < YBuff->nbuckets; ++i ) {
+       outfile->Printf(" Bucket number %i\n", i);
+       outfile->Printf("\tLow pq = %10d\n", YBuff->buckets[i].lo);
+       outfile->Printf("\tHigh pq = %10d\n", YBuff->buckets[i].hi);
+   }
 }
 
 
@@ -603,15 +712,17 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
        */
 
       whichbucket_J = YBuffJ->bucket_for_pq[ij] ;
-      whichbucket_K1 = YBuffK->bucket_for_pq[ik] ;
-      whichbucket_K2 = YBuffK->bucket_for_pq[il] ;
+//      whichbucket_K1 = YBuffK->bucket_for_pq[ik] ;
+//      whichbucket_K2 = YBuffK->bucket_for_pq[il] ;
 
       bptr_J= YBuffJ->buckets + whichbucket_J ;
       tmpi_J = (bptr_J->in_bucket)++ ;
-      bptr_K1= YBuffK->buckets + whichbucket_K1 ;
-      tmpi_K1 = (bptr_K1->in_bucket)++ ;
-      bptr_K2= YBuffK->buckets + whichbucket_K2 ;
-      tmpi_K2 = (bptr_K2->in_bucket)++ ;
+//      bptr_K1= YBuffK->buckets + whichbucket_K1 ;
+//      tmpi_K1 = (bptr_K1->in_bucket)++ ;
+//      if (whichbucket_K1 != whichbucket_K2) {
+//        bptr_K2= YBuffK->buckets + whichbucket_K2 ;
+//        tmpi_K2 = (bptr_K2->in_bucket)++ ;
+//      }
 
       // Fill the Coulomb bucket
       bptr_J->p[tmpi_J] = iabs;
@@ -624,12 +735,12 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
       // Fill the first exchange bucket.
       // BEWARE: we switch indices around, this allow us to use
       // the same code for J and K later
-      bptr_K1->p[tmpi_K1] = iabs;
-      bptr_K1->q[tmpi_K1] = kabs;
-      bptr_K1->r[tmpi_K1] = jabs;
-      bptr_K1->s[tmpi_K1] = labs;
+//      bptr_K1->p[tmpi_K1] = iabs;
+//      bptr_K1->q[tmpi_K1] = kabs;
+//      bptr_K1->r[tmpi_K1] = jabs;
+//      bptr_K1->s[tmpi_K1] = labs;
 
-      bptr_K1->val[tmpi_K1] = value;
+//      bptr_K1->val[tmpi_K1] = value;
 
       //Fill the second exchange bucket only if needed
       //if(ikjl == iljk) {
@@ -637,33 +748,38 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
       //} else {
       //    outfile->Printf("We should not skip\n");
       //}
-      if(iabs != jabs && kabs != labs) {
-          outfile->Printf("We do not skip\n");
-          bptr_K2->p[tmpi_K2] = iabs;
-          bptr_K2->q[tmpi_K2] = labs;
-          bptr_K2->r[tmpi_K2] = jabs;
-          bptr_K2->s[tmpi_K2] = kabs;
+//      if(iabs != jabs && kabs != labs) {
+//          outfile->Printf("We do not skip\n");
+//          if(whichbucket_K1 == whichbucket_K2) {
+//              outfile->Printf("MMMMmhhh this is awkward.\n");
+//          }
+//          bptr_K2->p[tmpi_K2] = iabs;
+//          bptr_K2->q[tmpi_K2] = labs;
+//          bptr_K2->r[tmpi_K2] = jabs;
+//          bptr_K2->s[tmpi_K2] = kabs;
 
-          bptr_K2->val[tmpi_K2] = value;
-      } else {
-          outfile->Printf("We skip.\n");
-      }
+//          bptr_K2->val[tmpi_K2] = value;
+//      } else {
+//          outfile->Printf("We skip.\n");
+//      }
 
       if (printflag)
         outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
                 iabs, jabs, kabs, labs, ijkl, value) ;
-      if ((tmpi_J+1) == YBuffJ->bucketsize) { /* need to flush bucket to disk */
+      if ((tmpi_J + 1) == YBuffJ->bucketsize) { /* need to flush bucket to disk */
         flush_bucket(bptr_J, 0);
         bptr_J->in_bucket = 0;
       }
-      if ((tmpi_K1+1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
-        flush_bucket(bptr_K1, 0);
-        bptr_K1->in_bucket = 0;
-      }
-      if ((tmpi_K2+1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
-        flush_bucket(bptr_K2, 0);
-        bptr_K2->in_bucket = 0;
-      }
+//      if ((tmpi_K1 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+//          flush_bucket(bptr_K1, 0);
+//          bptr_K1->in_bucket = 0;
+//        }
+//        if (whichbucket_K1 != whichbucket_K2) {
+//          if ((tmpi_K2 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+//              flush_bucket(bptr_K2, 0);
+//              bptr_K2->in_bucket = 0;
+//            }
+//        }
 
     }
     if (!ilsti)
@@ -1527,7 +1643,7 @@ void yosh_sort(struct yoshimine *YBuff, int out_tape, int keep_bins,
 **    out_tape     =  number for binary output file
 **    keep_bins    =  keep the intermediate tmp files
 **    ioff         =  the usual offset array
-**    nbfso        =  number of basis fns in symmetry orbitals
+**    num_so       =  number of basis fns per irrep
 **    ket_indices  =  number of ket indices (usually ntri)
 **    qdim         =  the number of possible values for index q
 **    print_lvl    =  verbosity level (how much to print)
@@ -1536,47 +1652,54 @@ void yosh_sort(struct yoshimine *YBuff, int out_tape, int keep_bins,
 ** Returns: none
 */
 void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_bins,
-      int *ioff, int nbfso, int ket_indices, int qdim, int print_lvl)
+      int* ioff, int print_lvl)
 {
+   size_t batch_size = 0;
+   size_t nintegrals;
    double *twoel_ints;
-   int i, max_pq;
-   struct iwlbuf inbuf, outbuf;
+   int lopq, hipq, i;
+   boost::shared_ptr<PSIO> psio = _default_psio_lib_;
+   char* label = new char[100];
+   struct iwlbuf inbuf;
 
-   /* may be slightly more than pq_per_bucket pq's in each bucket
-    * if the pq's didn't divide evenly among the buckets.  The remainder
-    * will go to the last bucket.
-    */
-   max_pq = YBuff->buckets[YBuff->core_loads-1].hi -
-            YBuff->buckets[YBuff->core_loads-1].lo
-            + 1;
+   // We compute the maximum batch size
+   for(int i = 0; i < YBuff->nbuckets; ++i) {
+       lopq = YBuff->buckets[i].lo;
+       hipq = YBuff->buckets[i].hi + 1;
+       nintegrals = ioff[hipq] - ioff[lopq];
+       if (nintegrals > batch_size) batch_size = nintegrals;
+   }
 
-   twoel_ints = init_array(max_pq * ket_indices) ;
-   iwl_buf_init(&outbuf, out_tape, YBuff->cutoff, 0, 0);
+   twoel_ints = init_array(batch_size);
 
-   for (i=0; i<YBuff->core_loads-1; i++) {
+   for (i = 0; i < YBuff->core_loads; i++) {
       if (print_lvl > 1) outfile->Printf( "Sorting bin %d\n", i+1);
+      lopq = YBuff->buckets[i].lo;
+      hipq = YBuff->buckets[i].hi;
       iwl_buf_init(&inbuf, YBuff->first_tmp_file+i, YBuff->cutoff, 1, 0);
-      sortbuf_pk(&inbuf, &outbuf, twoel_ints, (YBuff->buckets)[i].lo,
-              (YBuff->buckets)[i].hi, ioff, ioff2, nbfso, elbert,
-               intermediate, no_pq_perm, qdim, add, (print_lvl > 4), "outfile");
-      zero_arr(twoel_ints, max_pq * ket_indices);
-      /* zero_arr(twoel_ints, YBuff->pq_per_bucket * YBuff->bra_indices); */
-      iwl_buf_close(&inbuf, keep_bins);
+      sortbuf_pk(&inbuf, out_tape, is_exch, twoel_ints, lopq,
+              hipq, ioff, (print_lvl > 4), "outfile");
+      // Since everything is in triangle form, we can totally get the size
+      outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);
+      nintegrals = ioff[hipq + 1] - ioff[lopq];
+      if (is_exch) {
+        sprintf(label,"K Block (Batch %d)", i);
+      } else {
+        sprintf(label,"J Block (Batch %d)", i);
       }
+      psio->write_entry(out_tape, label, (char*)twoel_ints, nintegrals * sizeof(double));
+      if(i < YBuff->core_loads - 1) {
+          outfile->Printf("Zeroing twoelints\n");
+        zero_arr(twoel_ints, batch_size);
+      }
+      iwl_buf_close(&inbuf, keep_bins);
+   }
 
-
-   if (print_lvl > 1) outfile->Printf( "Sorting bin %d\n", i+1) ;
-   iwl_buf_init(&inbuf, YBuff->first_tmp_file+i, YBuff->cutoff, 1, 0);
-   sortbuf(&inbuf, &outbuf, twoel_ints, (YBuff->buckets)[i].lo,
-           (YBuff->buckets)[i].hi, ioff, ioff2, nbfso, elbert,
-           intermediate, no_pq_perm, qdim, add, (print_lvl > 4), "outfile");
-   iwl_buf_close(&inbuf, keep_bins);
 
    if (print_lvl > 1) outfile->Printf( "Done sorting.\n");
 
-   iwl_buf_flush(&outbuf, 1);
-   iwl_buf_close(&outbuf, 1);
    free(twoel_ints);
+   delete [] label;
 }
 
 

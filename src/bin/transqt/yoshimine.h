@@ -83,7 +83,10 @@ YEXTERN void yosh_init(struct yoshimine *YBuff, unsigned bra_indices,
       unsigned ket_indices, long maxcor, long maxcord,
 const int max_buckets,
       unsigned int first_tmp_file, double cutoff, std::string OutFileRMR);
-YEXTERN void yosh_print(struct yoshimine *YBuff, std::string OutFileRMR); 
+YEXTERN void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
+      long maxcor, long maxcord, const int max_buckets,
+      unsigned int first_tmp_file, double cutoff, std::string OutFileRMR);
+YEXTERN void yosh_print(struct yoshimine *YBuff, std::string OutFileRMR);
 YEXTERN void yosh_init_buckets(struct yoshimine *YBuff);
 YEXTERN void yosh_close_buckets(struct yoshimine *YBuff, int erase);
 YEXTERN void yosh_rdtwo(struct yoshimine *YBuff, int itapERI, int del_tei_file, int *num_so,
@@ -105,7 +108,7 @@ YEXTERN void yosh_sort(struct yoshimine *YBuff, int out_tape, int keep_bins,
       int elbert, int intermediate, int no_pq_perm, int qdim,
       int add, int print_lvl, std::string OutFileRMR);
 YEXTERN void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_bins,
-      int *ioff, int nbfso, int ket_indices, int qdim, int print_lvl);
+      int *ioff, int print_lvl);
 YEXTERN void yosh_done(struct yoshimine *YBuff);
 YEXTERN void yosh_flush(struct yoshimine *YBuff);
 YEXTERN void yosh_wrt_arr(struct yoshimine *YBuff, int p, int q, int pq, 

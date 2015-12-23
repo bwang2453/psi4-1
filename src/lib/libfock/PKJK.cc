@@ -172,13 +172,6 @@ void PKJK::preiterations()
     struct transqt::yoshimine YBuffJ;
     struct transqt::yoshimine YBuffK;
     int max_buckets = options.get_int("MAX_BUCKETS");
-    unsigned int bra_indices = pk_pairs_;
-
-    // TODO Caution: right now, Yoshimine initialization assumes all rs
-    // for a given pq, whereas we know we have pq >= rs here. We need
-    // to optimize that !
-
-    unsigned int ket_indices = pk_pairs_;
 
     // Initialize each buffer with only half of the memory. memory_ is in doubles
     // and already has a safety factor.
@@ -190,82 +183,34 @@ void PKJK::preiterations()
     // Integral tolerance
     double tolerance = options.get_double("INTS_TOLERANCE");
 
-    outfile->Printf("There are %i bra_indices, %i ket_indices\n", bra_indices, ket_indices);
     outfile->Printf("The pk_memory is %i doubles, there are %i max_buckets\n", pk_memory, max_buckets);
     outfile->Printf("The first tmp file is %i and the integral tolerance %f\n", first_tmp_file_J, tolerance);
-    transqt::yosh_init(&YBuffJ, bra_indices, ket_indices, pk_memory * sizeof(double), pk_memory,
+    transqt::yosh_init_pk(&YBuffJ, pk_pairs_, pk_memory * sizeof(double), pk_memory,
                       max_buckets, first_tmp_file_J, tolerance, "outfile");
     int first_tmp_file_K = first_tmp_file_J + YBuffJ.nbuckets;
     outfile->Printf("The first tmp K file is %i \n", first_tmp_file_K);
-    transqt::yosh_init(&YBuffK, bra_indices, ket_indices, pk_memory * sizeof(double), pk_memory,
+    transqt::yosh_init_pk(&YBuffK, pk_pairs_, pk_memory * sizeof(double), pk_memory,
                       max_buckets, first_tmp_file_K, tolerance, "outfile");
 
     transqt::yosh_print(&YBuffJ, "outfile");
     transqt::yosh_print(&YBuffK, "outfile");
 
-    // Initiate buckets: allocate array memory and open temporary files.
+    // We copy the bucket info into our local arrays for later retrieval.
 
-    transqt::yosh_init_buckets(&YBuffJ);
-    transqt::yosh_init_buckets(&YBuffK);
-
-    // We need the stupid ioff array.
-
-    int *ioff = new int[pk_size_];
-    ioff[0] = 0;
-    for(int i = 1; i < pk_size_; ++i) {
-        ioff[i] = ioff[i - 1] + i;
-    }
-
-   //Do the pre-sorting step in temporary files
-
-    transqt::yosh_rdtwo_pk(&YBuffJ,&YBuffK,PSIF_SO_TEI, 0, sopi, nirreps,ioff, (debug_ > 5));
-
-    // Close the buckets, but keep the temp. files.
-    transqt::yosh_close_buckets(&YBuffJ, 0);
-    transqt::yosh_close_buckets(&YBuffK, 0);
-
-    // Really proceed with the sorting and writing of the PK files
-
-    transqt::yosh_sort_pk(YBuffJ, 0, pk_file_, 0, ioff, nso, pk_size, nso, (debug_ > 5));
-
-    delete [] ioff;
-
-
-//    bool file_was_open = psio_->open_check(pk_file_);
-//    if(!file_was_open);
-        psio_->open(pk_file_, PSIO_OPEN_NEW);
-
-    // TODO figure out a better scheme.  For now, use half of the memory
-    // 32 comes from 2 (use only half the mem) * 8 (bytes per double)
-    size_t memory = memory_ / 16;
-
-    int nbatches      = 0;
-    size_t pq_incore  = 0;
-    size_t pqrs_index = 0;
+    int nbatches      = YBuffJ.nbuckets;
     size_t totally_symmetric_pairs = pairpi[0];
     batch_pq_min_.clear();
     batch_pq_max_.clear();
     batch_index_min_.clear();
     batch_index_max_.clear();
-    batch_pq_min_.push_back(0);
-    batch_index_min_.push_back(0);
-    for(size_t pq = 0; pq < pk_pairs_; ++pq){
-        // Increment counters
-        if(pq_incore + pq + 1 > memory){
-            // The batch is full. Save info.
-            batch_pq_max_.push_back(pq);
-            batch_pq_min_.push_back(pq);
-            batch_index_max_.push_back(pqrs_index);
-            batch_index_min_.push_back(pqrs_index);
-            pq_incore = 0;
-            nbatches++;
-        }
-        pq_incore  += pq + 1;
-        pqrs_index += pq + 1;
+    for(int i = 0; i < YBuffJ.nbuckets; ++i) {
+        int lowpq = YBuffJ.buckets[i].lo;
+        int hipq = YBuffJ.buckets[i].hi;
+        batch_pq_min_.push_back(lowpq);
+        batch_pq_max_.push_back(++hipq);
+        batch_index_min_.push_back( (lowpq + 1) * lowpq / 2);
+        batch_index_max_.push_back((hipq *(hipq + 1) / 2));
     }
-    batch_pq_max_.push_back(totally_symmetric_pairs);
-    batch_index_max_.push_back(pk_size_);
-    nbatches++;
 
     for(int batch = 0; batch < nbatches; ++batch){
         outfile->Printf("\tBatch %3d pq = [%8zu,%8zu] index = [%14zu,%zu]\n",
@@ -275,8 +220,40 @@ void PKJK::preiterations()
     }
 
 
+    // Initiate buckets: allocate array memory and open temporary files.
+
+    transqt::yosh_init_buckets(&YBuffJ);
+    transqt::yosh_init_buckets(&YBuffK);
+
+   //Do the pre-sorting step in temporary files
+
+    // We need the stupid ioff array.
+
+    int *ioff = new int[pk_pairs_ + 1];
+    ioff[0] = 0;
+    for(int i = 1; i < pk_pairs_ + 1; ++i) {
+        ioff[i] = ioff[i - 1] + i;
+    }
+
+    transqt::yosh_rdtwo_pk(&YBuffJ,&YBuffK,PSIF_SO_TEI, 0, sopi, nirreps,ioff, (debug_ > 5));
+
+    // Close the buckets, but keep the temp. files.
+    transqt::yosh_close_buckets(&YBuffJ, 0);
+    transqt::yosh_close_buckets(&YBuffK, 0);
+
+    // Really proceed with the sorting and writing of the PK files
+
+    psio_->open(pk_file_, PSIO_OPEN_NEW);
+
+    transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, ioff, (debug_ > 5));
+//    transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, ioff, 6);
+
+    delete [] ioff;
+
+
+
     // We might want to only build p in future...
-    bool build_k = true;
+/*    bool build_k = true;
 
     for(int batch = 0; batch < nbatches; ++batch){
         size_t min_index   = batch_index_min_[batch];
@@ -380,7 +357,7 @@ void PKJK::preiterations()
      * use fewer batches in principle.  For now we just use the batching scheme that's already been
      * computed for the conventional J/K combo, above
      */
-    if(do_wK_){
+/*    if(do_wK_){
         for(int batch = 0; batch < nbatches; ++batch){
             size_t min_index   = batch_index_min_[batch];
             size_t max_index   = batch_index_max_[batch];
@@ -467,7 +444,7 @@ void PKJK::preiterations()
     delete [] orb_offset;
 
 //    if(!file_was_open);
-        psio_->close(pk_file_, 1);
+ */       psio_->close(pk_file_, 1);
 
 }
 
