@@ -172,8 +172,10 @@ void yosh_init(struct yoshimine *YBuff, unsigned bra_indices,
 **    YBuff          =  pointer to struct which will hold data for the object
 **    bra_indices    =  the number of bra_index pairs for the two-electron
 **                      integrals being sorted
-**    maxcor         =  the core memory, in bytes
-**    maxcord        =  the core memory, in doubles
+**    maxcor         =  the core memory, in bytes, available for all buckets
+**                       simultaneously during presorting.
+**    maxcord        =  the core memory, in doubles, available for reading in
+**                      a single presorted bucket file during sorting.
 **    max_buckets    =  the max number of buckets to use (may be limited due
 **                      to the fact that each bucket requires a consecutively
 **                      numbered binary temp file).
@@ -242,6 +244,8 @@ void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
    // pq_per_bucket should not be used here.
    YBuff->pq_per_bucket = -1;
 
+   // I *think* all of this should work the same for J and K
+   // sorting
    unsigned long long int pq_incore = 0;
    i = 0;
    YBuff->buckets[i].lo = 0;
@@ -661,6 +665,15 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
   int *nsoff;
   int fi;
   struct iwlbuf ERIIN;
+  int* num_int_J = new int[YBuffJ->nbuckets];
+  int* num_int_K = new int[YBuffK->nbuckets];
+
+  for(int h  = 0; h < YBuffJ->nbuckets; ++h) {
+      num_int_J[h] = 0;
+  }
+  for(int h  = 0; h < YBuffK->nbuckets; ++h) {
+      num_int_K[h] = 0;
+  }
 
   if (printflag) {
     outfile->Printf( "Yoshimine rdtwo routine entered\n");
@@ -712,17 +725,12 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
        */
 
       whichbucket_J = YBuffJ->bucket_for_pq[ij] ;
-//      whichbucket_K1 = YBuffK->bucket_for_pq[ik] ;
-//      whichbucket_K2 = YBuffK->bucket_for_pq[il] ;
+      whichbucket_K1 = YBuffK->bucket_for_pq[ik] ;
 
       bptr_J= YBuffJ->buckets + whichbucket_J ;
       tmpi_J = (bptr_J->in_bucket)++ ;
-//      bptr_K1= YBuffK->buckets + whichbucket_K1 ;
-//      tmpi_K1 = (bptr_K1->in_bucket)++ ;
-//      if (whichbucket_K1 != whichbucket_K2) {
-//        bptr_K2= YBuffK->buckets + whichbucket_K2 ;
-//        tmpi_K2 = (bptr_K2->in_bucket)++ ;
-//      }
+      bptr_K1= YBuffK->buckets + whichbucket_K1 ;
+      tmpi_K1 = (bptr_K1->in_bucket)++ ;
 
       // Fill the Coulomb bucket
       bptr_J->p[tmpi_J] = iabs;
@@ -731,37 +739,16 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
       bptr_J->s[tmpi_J] = labs;
 
       bptr_J->val[tmpi_J] = value;
+      num_int_J[whichbucket_J]++;
 
       // Fill the first exchange bucket.
-      // BEWARE: we switch indices around, this allow us to use
-      // the same code for J and K later
-//      bptr_K1->p[tmpi_K1] = iabs;
-//      bptr_K1->q[tmpi_K1] = kabs;
-//      bptr_K1->r[tmpi_K1] = jabs;
-//      bptr_K1->s[tmpi_K1] = labs;
+      bptr_K1->p[tmpi_K1] = iabs;
+      bptr_K1->q[tmpi_K1] = jabs;
+      bptr_K1->r[tmpi_K1] = kabs;
+      bptr_K1->s[tmpi_K1] = labs;
 
-//      bptr_K1->val[tmpi_K1] = value;
-
-      //Fill the second exchange bucket only if needed
-      //if(ikjl == iljk) {
-      //    outfile->Printf("We should skip\n");
-      //} else {
-      //    outfile->Printf("We should not skip\n");
-      //}
-//      if(iabs != jabs && kabs != labs) {
-//          outfile->Printf("We do not skip\n");
-//          if(whichbucket_K1 == whichbucket_K2) {
-//              outfile->Printf("MMMMmhhh this is awkward.\n");
-//          }
-//          bptr_K2->p[tmpi_K2] = iabs;
-//          bptr_K2->q[tmpi_K2] = labs;
-//          bptr_K2->r[tmpi_K2] = jabs;
-//          bptr_K2->s[tmpi_K2] = kabs;
-
-//          bptr_K2->val[tmpi_K2] = value;
-//      } else {
-//          outfile->Printf("We skip.\n");
-//      }
+      bptr_K1->val[tmpi_K1] = value;
+      num_int_K[whichbucket_K1]++;
 
       if (printflag)
         outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
@@ -770,16 +757,35 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
         flush_bucket(bptr_J, 0);
         bptr_J->in_bucket = 0;
       }
-//      if ((tmpi_K1 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
-//          flush_bucket(bptr_K1, 0);
-//          bptr_K1->in_bucket = 0;
-//        }
-//        if (whichbucket_K1 != whichbucket_K2) {
-//          if ((tmpi_K2 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
-//              flush_bucket(bptr_K2, 0);
-//              bptr_K2->in_bucket = 0;
-//            }
-//        }
+      if ((tmpi_K1 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+          flush_bucket(bptr_K1, 0);
+          bptr_K1->in_bucket = 0;
+        }
+
+      //Fill the second exchange bucket only if needed
+      if(iabs != jabs && kabs != labs) {
+         // outfile->Printf("ik is %i and il is %i\n", ik, il);
+         // outfile->Printf("for integral <%i %i |%i %i>", iabs, jabs, kabs, labs);
+          whichbucket_K2 = YBuffK->bucket_for_pq[il] ;
+          if (whichbucket_K1 != whichbucket_K2) {
+             bptr_K2 = YBuffK->buckets + whichbucket_K2 ;
+             tmpi_K2 = (bptr_K2->in_bucket)++ ;
+
+             //outfile->Printf("We do not skip\n");
+             bptr_K2->p[tmpi_K2] = iabs;
+             bptr_K2->q[tmpi_K2] = jabs;
+             bptr_K2->r[tmpi_K2] = kabs;
+             bptr_K2->s[tmpi_K2] = labs;
+
+             bptr_K2->val[tmpi_K2] = value;
+             num_int_K[whichbucket_K2]++;
+
+             if ((tmpi_K2 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+                 flush_bucket(bptr_K2, 0);
+                 bptr_K2->in_bucket = 0;
+             }
+          }
+      }
 
     }
     if (!ilsti)
@@ -802,10 +808,19 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
   }
 
   for (i=0; i<YBuffK->nbuckets; i++) {
-    flush_bucket((YBuffJ->buckets)+i, 1);
+    flush_bucket((YBuffK->buckets)+i, 1);
+  }
+
+  for (int h = 0; h < YBuffJ->nbuckets; ++h) {
+      outfile->Printf("We wrote %i integrals in J bucket %i\n", num_int_J[h], h);
+  }
+  for (int h = 0; h < YBuffK->nbuckets; ++h) {
+      outfile->Printf("We wrote %i integrals in K bucket %i\n", num_int_K[h], h);
   }
 
   free(nsoff);
+  delete [] num_int_J;
+  delete [] num_int_K;
 
   iwl_buf_close(&ERIIN, !del_tei_file);
 }
@@ -1680,8 +1695,8 @@ void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_b
       sortbuf_pk(&inbuf, out_tape, is_exch, twoel_ints, lopq,
               hipq, ioff, (print_lvl > 4), "outfile");
       // Since everything is in triangle form, we can totally get the size
-      outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);
       nintegrals = ioff[hipq + 1] - ioff[lopq];
+      outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);
       if (is_exch) {
         sprintf(label,"K Block (Batch %d)", i);
       } else {

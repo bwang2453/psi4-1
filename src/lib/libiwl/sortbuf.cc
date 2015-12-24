@@ -520,7 +520,7 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
    int lastbuf;                /* last buffer flag */
    int pabs, qabs, rabs, sabs, pq, rs;
    int prel, qrel, rrel, srel, psym, qsym, rsym, ssym;
-   long int pqrs, offset;
+   long int pqrs, offset, maxind;
 
    boost::shared_ptr<psi::PsiOutStream> printer=(out=="outfile"?outfile:
             boost::shared_ptr<OutFile>(new OutFile(out)));
@@ -532,6 +532,8 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
    // Compute the index of the lowest pq for offset
 
    offset = ioff[fpq];
+
+   maxind = ioff[lpq] + lpq;
 
    lblptr = Inbuf->labels;
    valptr = Inbuf->values;
@@ -567,11 +569,50 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
                  pq = ioff[MAX0(pabs, qabs)] + MIN0(pabs, qabs);
                  rs = ioff[MAX0(rabs, sabs)] + MIN0(rabs, sabs);
                  pqrs = ioff[MAX0(pq, rs)] + MIN0(pq,rs);
+                 if (pqrs > maxind || (pqrs < offset)) {
+                     outfile->Printf("pqrs is out of bounds for J\n");
+                 }
                  //if (printflg && ints[pqrs-offset] != 0.0)
                  //   printer->Printf( "Adding %10.6f to el %d %d %d %d = %10.6f\n",
                  //           valptr[Inbuf->idx], pabs, qabs, rabs, sabs, ints[pqrs-offset]);
                  ints[pqrs - offset] += valptr[Inbuf->idx];
              }
+
+          } else {
+              // K (2nd sort, ILJK)
+              if ((psym == qsym) && (rsym == ssym)) {
+                  if ( (prel != qrel) && (rrel != srel)) {
+                      if((psym == ssym) && (qsym == rsym)) {
+                          pq = ioff[MAX0(pabs, sabs)] + MIN0(pabs, sabs);
+                          rs = ioff[MAX0(qabs, rabs)] + MIN0(qabs, rabs);
+                          pqrs = ioff[MAX0(pq, rs)] + MIN0(pq, rs);
+                          if ((pqrs > maxind) || (pqrs < offset)) {
+                              outfile->Printf("pqrs is out of bounds\n");
+                          } else {
+                          if(prel == srel || qrel == rrel) {
+                              ints[pqrs - offset] += valptr[Inbuf->idx];
+                          } else {
+                              ints[pqrs - offset] += 0.5 * valptr[Inbuf->idx];
+                          }
+                          }
+                      }
+                  }
+              }
+              // K (1st sort, IKJL)
+              if ((psym == rsym) && (qsym == ssym)) {
+                  pq = ioff[MAX0(pabs, rabs)] + MIN0(pabs, rabs);
+                  rs = ioff[MAX0(qabs, sabs)] + MIN0(qabs, sabs);
+                  pqrs = ioff[MAX0(pq, rs)] + MIN0(pq, rs);
+                  if (pqrs > maxind || (pqrs < offset)) {
+                      outfile->Printf("pqrs is out of bounds\n");
+                  } else {
+                  if((prel == rrel) || (qrel == srel)) {
+                      ints[pqrs - offset] += valptr[Inbuf->idx];
+                  } else {
+                      ints[pqrs - offset] += 0.5 * valptr[Inbuf->idx];
+                  }
+                  }
+              }
 
           }
 

@@ -175,7 +175,8 @@ void PKJK::preiterations()
 
     // Initialize each buffer with only half of the memory. memory_ is in doubles
     // and already has a safety factor.
-    long pk_memory = memory_ / 2;
+    long pk_sort_mem = memory_;
+    long pk_presort_mem = memory_ * sizeof(double) / 2;
 
     // First temporary file for pre-sorting.
     int first_tmp_file_J = options.get_int("FIRST_TMP_FILE");
@@ -183,19 +184,21 @@ void PKJK::preiterations()
     // Integral tolerance
     double tolerance = options.get_double("INTS_TOLERANCE");
 
-    outfile->Printf("The pk_memory is %i doubles, there are %i max_buckets\n", pk_memory, max_buckets);
+    outfile->Printf("The pk_sort_mem is %i doubles, there are %i max_buckets\n", pk_sort_mem, max_buckets);
     outfile->Printf("The first tmp file is %i and the integral tolerance %f\n", first_tmp_file_J, tolerance);
-    transqt::yosh_init_pk(&YBuffJ, pk_pairs_, pk_memory * sizeof(double), pk_memory,
+    transqt::yosh_init_pk(&YBuffJ, pk_pairs_, pk_presort_mem, pk_sort_mem,
                       max_buckets, first_tmp_file_J, tolerance, "outfile");
     int first_tmp_file_K = first_tmp_file_J + YBuffJ.nbuckets;
     outfile->Printf("The first tmp K file is %i \n", first_tmp_file_K);
-    transqt::yosh_init_pk(&YBuffK, pk_pairs_, pk_memory * sizeof(double), pk_memory,
+    transqt::yosh_init_pk(&YBuffK, pk_pairs_, pk_presort_mem, pk_sort_mem,
                       max_buckets, first_tmp_file_K, tolerance, "outfile");
 
     transqt::yosh_print(&YBuffJ, "outfile");
     transqt::yosh_print(&YBuffK, "outfile");
 
     // We copy the bucket info into our local arrays for later retrieval.
+    // Low and high pq indices and number of buckets should be the same
+    // between J and K
 
     int nbatches      = YBuffJ.nbuckets;
     size_t totally_symmetric_pairs = pairpi[0];
@@ -246,6 +249,7 @@ void PKJK::preiterations()
     psio_->open(pk_file_, PSIO_OPEN_NEW);
 
     transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, ioff, (debug_ > 5));
+    transqt::yosh_sort_pk(&YBuffK, 1, pk_file_, 0, ioff, (debug_ > 5));
 //    transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, ioff, 6);
 
     delete [] ioff;
