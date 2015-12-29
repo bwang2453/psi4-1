@@ -97,6 +97,7 @@ void PKJK::preiterations()
     int *sopi = Process::environment.wavefunction()->nsopi();
     int nirreps = Process::environment.wavefunction()->nirrep();
 
+    //TODO: Delete the following ?
     so2symblk_ = new int[nso];
     so2index_  = new int[nso];
     size_t so_count = 0;
@@ -116,6 +117,7 @@ void PKJK::preiterations()
     for(int h = 1; h < nirreps; ++h)
         orb_offset[h] = orb_offset[h-1] + sopi[h-1];
 
+    //TODO: Eliminate pk_symoffset, we still need pk_pairs though.
     // Compute PK symmetry mapping
     int *pk_symoffset = new int[nirreps];
     pk_size_ = 0;  // Size of PK matrix triangle, i.e. ncol*(ncol - 1)/2 + ncol
@@ -238,7 +240,10 @@ void PKJK::preiterations()
         ioff[i] = ioff[i - 1] + i;
     }
 
-    transqt::yosh_rdtwo_pk(&YBuffJ,&YBuffK,PSIF_SO_TEI, 0, sopi, nirreps,ioff, (debug_ > 5));
+    //TODO: Solve the double sorting of K integrals that are not in the same
+    // bucket, we are writing more integrals to disk than anticipated.
+    transqt::yosh_rdtwo_pk(&YBuffJ,&YBuffK,PSIF_SO_TEI, 0, nirreps, so2index_, so2symblk_,
+                           pk_symoffset, ioff, (debug_ > 5));
 
     // Close the buckets, but keep the temp. files.
     transqt::yosh_close_buckets(&YBuffJ, 0);
@@ -248,8 +253,11 @@ void PKJK::preiterations()
 
     psio_->open(pk_file_, PSIO_OPEN_NEW);
 
-    transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, ioff, (debug_ > 5));
-    transqt::yosh_sort_pk(&YBuffK, 1, pk_file_, 0, ioff, (debug_ > 5));
+    outfile->Printf("Just before sorting\n");
+    transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, so2index_, so2symblk_,
+                          pk_symoffset, ioff, (debug_ > 5));
+    transqt::yosh_sort_pk(&YBuffK, 1, pk_file_, 0, so2index_, so2symblk_,
+                          pk_symoffset, ioff, (debug_ > 5));
 //    transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, ioff, 6);
 
     delete [] ioff;
@@ -853,6 +861,7 @@ void PKJK::compute_JK()
 }
 
 
+//TODO: We may not need this anymore.
 void PKJK::postiterations()
 {
     delete[] so2symblk_;

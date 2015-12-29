@@ -644,29 +644,39 @@ void yosh_rdtwo(struct yoshimine *YBuff, int itapERI, int del_tei_file, int *num
 **   YBuffJ       = Yoshimine object pointer for Coulomb integrals
 **   YBuffK       = Yoshimine object pointer for exchange integrals
 **   itapERI      = unit number for two el. file (33)
-**   num_so       = array of number of symm orbs in each irrep (for reindex)
 **   nirreps      = number of irreps
+**   so2rel       = array mapping absolute basis function index to relative
+**                  basis function index within an irrep, so2rel[abs] = rel
+**   so2sym       = array mapping absolute basis function index to irrep
+**                  number, so2sym[abs] = sym
+**   pksymoff     = array containing the offset in each irrep to convert a
+**                  pq index computed with relative indices to an absolute
+**                  pq index, pqrel = ioff[prel] + qrel, pqabs = pqrel + pksymoff[psym]
 **   ioff         = standard lexical index array
 **   del_tei_file = 1 to delete the tei file (33), 0 otherwise
 **   printflag    = 1 for printing (for debugging only!) else 0
 */
 void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapERI,
-      int del_tei_file, int *num_so, int nirreps, int *ioff, int printflag)
+      int del_tei_file, int nirreps, int* so2rel, int* so2sym, int* pksymoff, int *ioff, int printflag)
 {
   int ilsti, nbuf;
   int i, ij, kl, ijkl;
-  int ik, jl, ikjl, il, jk, iljk;
+  int ik, il;
   int iabs, jabs, kabs, labs ;
+  int irel, jrel, krel, lrel;
+  int isym, jsym, ksym, lsym;
   double value;
   int *tmp;
   struct bucket *bptr_J, *bptr_K1, *bptr_K2 ;
   long int tmpi_J, tmpi_K1, tmpi_K2;
   int whichbucket_J, whichbucket_K1, whichbucket_K2, firstfile_J, firstfile_K;
-  int *nsoff;
   int fi;
   struct iwlbuf ERIIN;
-  int* num_int_J = new int[YBuffJ->nbuckets];
-  int* num_int_K = new int[YBuffK->nbuckets];
+  int* num_int_J;
+  int* num_int_K;
+
+  num_int_J = init_int_array(YBuffJ->nbuckets);
+  num_int_K = init_int_array(YBuffK->nbuckets);
 
   for(int h  = 0; h < YBuffJ->nbuckets; ++h) {
       num_int_J[h] = 0;
@@ -685,12 +695,6 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
 
   iwl_buf_init(&ERIIN,itapERI,0.0,1,1);
 
-  nsoff = init_int_array(nirreps);
-  nsoff[0] = 0;
-  for (i=1; i<nirreps; i++) {
-    nsoff[i] = nsoff[i-1] + num_so[i-1];
-  }
-
   do {
     /* read a buffer full */
     ilsti = ERIIN.lastbuf;
@@ -702,91 +706,117 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
       jabs = ERIIN.labels[fi+1];
       kabs = ERIIN.labels[fi+2];
       labs = ERIIN.labels[fi+3];
+
+      irel = so2rel[iabs];
+      jrel = so2rel[jabs];
+      krel = so2rel[kabs];
+      lrel = so2rel[labs];
+
+      isym = so2sym[iabs];
+      jsym = so2sym[jabs];
+      ksym = so2sym[kabs];
+      lsym = so2sym[labs];
+
       value = ERIIN.values[i];
       fi += 4;
 
-      /* calculate ijkl lexical index */
-      ij = ioff[iabs] + jabs;
-      kl = ioff[kabs] + labs;
-      // TODO: Do we need ijkl??
-      ijkl = ioff[ij] + kl;
+      // Need to add the logic for symmetry of the indices here
 
-      /* Calculate ikjl lexical index */
-      ik = ioff[iabs] + kabs;
-      jl = ioff[jabs] + labs;
-      ikjl = ioff[ik] + jl;
+      // K for first sort IKJL
+      if ((isym == ksym) && (jsym == lsym)) {
+          /* Calculate ik for exchange buckets */
+          ik = ioff[irel] + krel;
+          ik += pksymoff[isym];
 
-      /* Calculate iljk lexical index */
-      il = ioff[iabs] + labs;
-      jk = ioff[jabs] + kabs;
-      iljk = ioff[il] + jk;
+          /* figure out what bucket to put it in, and do so
+           */
 
-      /* figure out what bucket to put it in, and do so
-       */
+          whichbucket_K1 = YBuffK->bucket_for_pq[ik] ;
 
-      whichbucket_J = YBuffJ->bucket_for_pq[ij] ;
-      whichbucket_K1 = YBuffK->bucket_for_pq[ik] ;
+          bptr_K1= YBuffK->buckets + whichbucket_K1 ;
+          tmpi_K1 = (bptr_K1->in_bucket)++ ;
 
-      bptr_J= YBuffJ->buckets + whichbucket_J ;
-      tmpi_J = (bptr_J->in_bucket)++ ;
-      bptr_K1= YBuffK->buckets + whichbucket_K1 ;
-      tmpi_K1 = (bptr_K1->in_bucket)++ ;
+          // Fill the first exchange bucket.
+          bptr_K1->p[tmpi_K1] = iabs;
+          bptr_K1->q[tmpi_K1] = jabs;
+          bptr_K1->r[tmpi_K1] = kabs;
+          bptr_K1->s[tmpi_K1] = labs;
 
-      // Fill the Coulomb bucket
-      bptr_J->p[tmpi_J] = iabs;
-      bptr_J->q[tmpi_J] = jabs;
-      bptr_J->r[tmpi_J] = kabs;
-      bptr_J->s[tmpi_J] = labs;
-
-      bptr_J->val[tmpi_J] = value;
-      num_int_J[whichbucket_J]++;
-
-      // Fill the first exchange bucket.
-      bptr_K1->p[tmpi_K1] = iabs;
-      bptr_K1->q[tmpi_K1] = jabs;
-      bptr_K1->r[tmpi_K1] = kabs;
-      bptr_K1->s[tmpi_K1] = labs;
-
-      bptr_K1->val[tmpi_K1] = value;
-      num_int_K[whichbucket_K1]++;
-
-      if (printflag)
-        outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
-                iabs, jabs, kabs, labs, ijkl, value) ;
-      if ((tmpi_J + 1) == YBuffJ->bucketsize) { /* need to flush bucket to disk */
-        flush_bucket(bptr_J, 0);
-        bptr_J->in_bucket = 0;
+          bptr_K1->val[tmpi_K1] = value;
+          num_int_K[whichbucket_K1]++;
       }
       if ((tmpi_K1 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
           flush_bucket(bptr_K1, 0);
           bptr_K1->in_bucket = 0;
-        }
-
-      //Fill the second exchange bucket only if needed
-      if(iabs != jabs && kabs != labs) {
-         // outfile->Printf("ik is %i and il is %i\n", ik, il);
-         // outfile->Printf("for integral <%i %i |%i %i>", iabs, jabs, kabs, labs);
-          whichbucket_K2 = YBuffK->bucket_for_pq[il] ;
-          if (whichbucket_K1 != whichbucket_K2) {
-             bptr_K2 = YBuffK->buckets + whichbucket_K2 ;
-             tmpi_K2 = (bptr_K2->in_bucket)++ ;
-
-             //outfile->Printf("We do not skip\n");
-             bptr_K2->p[tmpi_K2] = iabs;
-             bptr_K2->q[tmpi_K2] = jabs;
-             bptr_K2->r[tmpi_K2] = kabs;
-             bptr_K2->s[tmpi_K2] = labs;
-
-             bptr_K2->val[tmpi_K2] = value;
-             num_int_K[whichbucket_K2]++;
-
-             if ((tmpi_K2 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
-                 flush_bucket(bptr_K2, 0);
-                 bptr_K2->in_bucket = 0;
-             }
-          }
       }
 
+
+      // We need the symmetry offset to get pqrs properly.
+      if((isym == jsym) && (ksym == lsym)) {
+          /* calculate ijkl lexical index */
+          ij = ioff[irel] + jrel;
+          ij += pksymoff[isym];
+          kl = ioff[krel] + lrel;
+          kl += pksymoff[ksym];
+          // ijkl only here for debug printing
+          ijkl = ioff[ij] + kl;
+          whichbucket_J = YBuffJ->bucket_for_pq[ij] ;
+          bptr_J = YBuffJ->buckets + whichbucket_J ;
+          tmpi_J = (bptr_J->in_bucket)++ ;
+
+          // Fill the Coulomb bucket
+          bptr_J->p[tmpi_J] = iabs;
+          bptr_J->q[tmpi_J] = jabs;
+          bptr_J->r[tmpi_J] = kabs;
+          bptr_J->s[tmpi_J] = labs;
+
+          bptr_J->val[tmpi_J] = value;
+          num_int_J[whichbucket_J]++;
+
+          if (printflag)
+            outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
+                    iabs, jabs, kabs, labs, ijkl, value) ;
+
+          // Now we do the second sort for K (ILJK), which apparently should
+          // be in there.
+
+          if((irel != jrel) && (krel != lrel)) {
+              if((isym == lsym) && (jsym == ksym)) {
+                  /* Calculate il for exchange buckets */
+                  il = ioff[irel] + lrel;
+                  il += pksymoff[isym];
+
+                  // outfile->Printf("ik is %i and il is %i\n", ik, il);
+                  // outfile->Printf("for integral <%i %i |%i %i>", iabs, jabs, kabs, labs);
+                  whichbucket_K2 = YBuffK->bucket_for_pq[il] ;
+                  if (whichbucket_K1 != whichbucket_K2) {
+                      bptr_K2 = YBuffK->buckets + whichbucket_K2 ;
+                      tmpi_K2 = (bptr_K2->in_bucket)++ ;
+
+                      //outfile->Printf("We do not skip\n");
+                      bptr_K2->p[tmpi_K2] = iabs;
+                      bptr_K2->q[tmpi_K2] = jabs;
+                      bptr_K2->r[tmpi_K2] = kabs;
+                      bptr_K2->s[tmpi_K2] = labs;
+
+                      bptr_K2->val[tmpi_K2] = value;
+                      num_int_K[whichbucket_K2]++;
+
+                      if ((tmpi_K2 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+                          flush_bucket(bptr_K2, 0);
+                          bptr_K2->in_bucket = 0;
+                      }
+                  }
+
+              }
+          }
+      } else if((isym == lsym) && (jsym == ksym)) {
+          outfile->Printf("This integral should be in K 2nd sort\n");
+      }
+      if ((tmpi_J + 1) == YBuffJ->bucketsize) { /* need to flush bucket to disk */
+        flush_bucket(bptr_J, 0);
+        bptr_J->in_bucket = 0;
+      }
     }
     if (!ilsti)
       iwl_buf_fetch(&ERIIN);
@@ -818,9 +848,8 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
       outfile->Printf("We wrote %i integrals in K bucket %i\n", num_int_K[h], h);
   }
 
-  free(nsoff);
-  delete [] num_int_J;
-  delete [] num_int_K;
+  free(num_int_J);
+  free(num_int_K);
 
   iwl_buf_close(&ERIIN, !del_tei_file);
 }
@@ -1657,6 +1686,13 @@ void yosh_sort(struct yoshimine *YBuff, int out_tape, int keep_bins,
 **                    the exchange matrix
 **    out_tape     =  number for binary output file
 **    keep_bins    =  keep the intermediate tmp files
+**    so2rel       =  array mapping absolute basis function index to relative
+**                    basis function index within an irrep, so2rel[abs] = rel
+**    so2sym       =  array mapping absolute basis function index to irrep
+**                    number, so2sym[abs] = sym
+**    pksymoff     =  array containing the offset in each irrep to convert a
+**                    pq index computed with relative indices to an absolute
+**                    pq index, pqrel = ioff[prel] + qrel, pqabs = pqrel + pksymoff[psym]
 **    ioff         =  the usual offset array
 **    num_so       =  number of basis fns per irrep
 **    ket_indices  =  number of ket indices (usually ntri)
@@ -1667,7 +1703,7 @@ void yosh_sort(struct yoshimine *YBuff, int out_tape, int keep_bins,
 ** Returns: none
 */
 void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_bins,
-      int* ioff, int print_lvl)
+      int* so2ind, int* so2sym, int* pksymoff, int* ioff, int print_lvl)
 {
    size_t batch_size = 0;
    size_t nintegrals;
@@ -1693,7 +1729,7 @@ void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_b
       hipq = YBuff->buckets[i].hi;
       iwl_buf_init(&inbuf, YBuff->first_tmp_file+i, YBuff->cutoff, 1, 0);
       sortbuf_pk(&inbuf, out_tape, is_exch, twoel_ints, lopq,
-              hipq, ioff, (print_lvl > 4), "outfile");
+              hipq, so2ind, so2sym, pksymoff, ioff, (print_lvl > 4), "outfile");
       // Since everything is in triangle form, we can totally get the size
       nintegrals = ioff[hipq + 1] - ioff[lopq];
       outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);

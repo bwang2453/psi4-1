@@ -93,7 +93,8 @@ YEXTERN void yosh_rdtwo(struct yoshimine *YBuff, int itapERI, int del_tei_file, 
       int nirreps, int *ioff, int elbert, int fzcflag, double *P,
       double *Hc, int matrix, int printflag, std::string OutFileRMR);
 YEXTERN void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapERI,
-      int del_tei_file, int *num_so, int nirreps, int *ioff, int printflag);
+      int del_tei_file, int nirreps, int* so2rel, int* so2sym, int* pksymoff,
+      int *ioff, int printflag);
 YEXTERN void yosh_rdtwo_uhf(struct yoshimine *YBuff, int itapERI, int del_tei_file, int *num_so,
       int nirreps, int *ioff, int elbert, int fzcflag, double *Pa, double *Pb,
       double *Hca, double *Hcb, int matrix, int printflag, std::string OutFileRMR);
@@ -108,7 +109,7 @@ YEXTERN void yosh_sort(struct yoshimine *YBuff, int out_tape, int keep_bins,
       int elbert, int intermediate, int no_pq_perm, int qdim,
       int add, int print_lvl, std::string OutFileRMR);
 YEXTERN void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_bins,
-      int *ioff, int print_lvl);
+      int* so2ind, int* so2sym, int* pksymoff, int *ioff, int print_lvl);
 YEXTERN void yosh_done(struct yoshimine *YBuff);
 YEXTERN void yosh_flush(struct yoshimine *YBuff);
 YEXTERN void yosh_wrt_arr(struct yoshimine *YBuff, int p, int q, int pq, 

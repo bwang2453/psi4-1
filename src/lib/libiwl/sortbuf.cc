@@ -498,6 +498,13 @@ void sortbuf(struct iwlbuf *Inbuf, struct iwlbuf *Outbuf,
 **    \param ints        = array to hold integrals in
 **    \param fpq         = first pq for this tape
 **    \param lpq         = last pq for this tape
+**    \param so2rel      = array mapping absolute basis function index to relative
+**                         basis function index within an irrep, so2rel[abs] = rel
+**    \param so2sym      = array mapping absolute basis function index to irrep
+**                         number, so2sym[abs] = sym
+**    \param pksymoff    = array containing the offset in each irrep to convert a
+**                         pq index computed with relative indices to an absolute
+**                         pq index, pqrel = ioff[prel] + qrel, pqabs = pqrel + pksymoff[psym]
 **    \param ioff        = offset array for the left indices
 **    \param num_so      = number of basis functions per irrep
 **    \param qdim        = dimensions for the q index...nvirt for MP2
@@ -510,10 +517,9 @@ void sortbuf(struct iwlbuf *Inbuf, struct iwlbuf *Outbuf,
 ** \ingroup IWL
 */
 void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
-      double *ints, int fpq, int lpq, int *ioff,
-      int printflg, std::string out)
+      double *ints, int fpq, int lpq, int* so2ind, int* so2sym,
+      int* pksymoff, int* ioff, int printflg, std::string out)
 {
-   int i;
    Value *valptr;              /* array of integral values */
    Label *lblptr;              /* array of integral labels */
    int idx;                    /* index for curr integral (0..ints_per_buf) */
@@ -551,40 +557,43 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
           rabs = (int) lblptr[idx++];
           sabs = (int) lblptr[idx++];
 
-          // Temporary, for C1
+          // Get indices within symmetry
 
-          prel = pabs;
-          qrel = qabs;
-          rrel = rabs;
-          srel = sabs;
+          prel = so2ind[pabs];
+          qrel = so2ind[qabs];
+          rrel = so2ind[rabs];
+          srel = so2ind[sabs];
 
-          psym = 0;
-          qsym = 0;
-          rsym = 0;
-          ssym = 0;
+          psym = so2sym[pabs];
+          qsym = so2sym[qabs];
+          rsym = so2sym[rabs];
+          ssym = so2sym[sabs];
 
           if (!is_exch) {
 
-             if ((psym == qsym) && (rsym == ssym)) {
-                 pq = ioff[MAX0(pabs, qabs)] + MIN0(pabs, qabs);
-                 rs = ioff[MAX0(rabs, sabs)] + MIN0(rabs, sabs);
-                 pqrs = ioff[MAX0(pq, rs)] + MIN0(pq,rs);
-                 if (pqrs > maxind || (pqrs < offset)) {
-                     outfile->Printf("pqrs is out of bounds for J\n");
-                 }
-                 //if (printflg && ints[pqrs-offset] != 0.0)
-                 //   printer->Printf( "Adding %10.6f to el %d %d %d %d = %10.6f\n",
-                 //           valptr[Inbuf->idx], pabs, qabs, rabs, sabs, ints[pqrs-offset]);
-                 ints[pqrs - offset] += valptr[Inbuf->idx];
-             }
+              // We only stored integrals of the relevant symmetry
+              pq = ioff[MAX0(prel, qrel)] + MIN0(prel, qrel);
+              pq += pksymoff[psym];
+              rs = ioff[MAX0(rrel, srel)] + MIN0(rrel, srel);
+              rs += pksymoff[rsym];
+              pqrs = ioff[MAX0(pq, rs)] + MIN0(pq,rs);
+              if (pqrs > maxind || (pqrs < offset)) {
+                  outfile->Printf("pqrs is out of bounds for J\n");
+              }
+              //if (printflg && ints[pqrs-offset] != 0.0)
+              //   printer->Printf( "Adding %10.6f to el %d %d %d %d = %10.6f\n",
+              //           valptr[Inbuf->idx], pabs, qabs, rabs, sabs, ints[pqrs-offset]);
+              ints[pqrs - offset] += valptr[Inbuf->idx];
 
           } else {
               // K (2nd sort, ILJK)
               if ((psym == qsym) && (rsym == ssym)) {
                   if ( (prel != qrel) && (rrel != srel)) {
                       if((psym == ssym) && (qsym == rsym)) {
-                          pq = ioff[MAX0(pabs, sabs)] + MIN0(pabs, sabs);
-                          rs = ioff[MAX0(qabs, rabs)] + MIN0(qabs, rabs);
+                          pq = ioff[MAX0(prel, srel)] + MIN0(prel, srel);
+                          pq += pksymoff[psym];
+                          rs = ioff[MAX0(qrel, rrel)] + MIN0(qrel, rrel);
+                          rs += pksymoff[rsym];
                           pqrs = ioff[MAX0(pq, rs)] + MIN0(pq, rs);
                           if ((pqrs > maxind) || (pqrs < offset)) {
                               outfile->Printf("pqrs is out of bounds\n");
@@ -600,8 +609,10 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
               }
               // K (1st sort, IKJL)
               if ((psym == rsym) && (qsym == ssym)) {
-                  pq = ioff[MAX0(pabs, rabs)] + MIN0(pabs, rabs);
-                  rs = ioff[MAX0(qabs, sabs)] + MIN0(qabs, sabs);
+                  pq = ioff[MAX0(prel, rrel)] + MIN0(prel, rrel);
+                  pq += pksymoff[psym];
+                  rs = ioff[MAX0(qrel, srel)] + MIN0(qrel, srel);
+                  rs += pksymoff[ssym];
                   pqrs = ioff[MAX0(pq, rs)] + MIN0(pq, rs);
                   if (pqrs > maxind || (pqrs < offset)) {
                       outfile->Printf("pqrs is out of bounds\n");
