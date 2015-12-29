@@ -109,7 +109,6 @@ void yosh_init(struct yoshimine *YBuff, unsigned bra_indices,
    twoel_array_size = bra_indices; twoel_array_size *= ket_indices;
    YBuff->core_loads = (twoel_array_size - 1) / maxcord + 1 ;
    nbuckets = YBuff->core_loads ;
-   outfile->Printf("nbuckets is %i\n", nbuckets );
    YBuff->nbuckets = nbuckets;
    YBuff->cutoff = cutoff;
    YBuff->bra_indices = bra_indices;
@@ -136,7 +135,6 @@ void yosh_init(struct yoshimine *YBuff, unsigned bra_indices,
    }
    else
       bytes_per_bucket = (unsigned long int) (maxcor / nbuckets);
-   outfile->Printf("There are %i bytes per buckets\n", bytes_per_bucket);
 
    free_bytes_per_bucket = bytes_per_bucket -
      (unsigned long int) (sizeof(struct iwlbuf) + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
@@ -198,14 +196,14 @@ void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
    unsigned long long int twoel_array_size;              /*--- Although on 32-bit systems one can only allocate 2GB arrays
                                                            in 1 process space, one can store much bigger integrals files on disk ---*/
    unsigned int nbuckets;
-   int i, j, pq;
+   int i;
    unsigned long int bytes_per_bucket, free_bytes_per_bucket;
 
    YBuff->first_tmp_file = first_tmp_file;
    twoel_array_size = bra_indices * (bra_indices + 1) / 2;
    YBuff->core_loads = (twoel_array_size - 1) / maxcord + 1 ;
    nbuckets = YBuff->core_loads ;
-   outfile->Printf("nbuckets is %i\n", nbuckets );
+//DEBUG   outfile->Printf("nbuckets is %i\n", nbuckets );
    YBuff->nbuckets = nbuckets;
    YBuff->cutoff = cutoff;
    YBuff->bra_indices = bra_indices;
@@ -228,7 +226,7 @@ void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
    }
    else
       bytes_per_bucket = (unsigned long int) (maxcor / nbuckets);
-   outfile->Printf("There are %i bytes per buckets\n", bytes_per_bucket);
+//DEBUG   outfile->Printf("There are %lu bytes per buckets\n", bytes_per_bucket);
 
    free_bytes_per_bucket = bytes_per_bucket -
      (unsigned long int) (sizeof(struct iwlbuf) + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
@@ -675,15 +673,15 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
   int* num_int_J;
   int* num_int_K;
 
-  num_int_J = init_int_array(YBuffJ->nbuckets);
-  num_int_K = init_int_array(YBuffK->nbuckets);
-
-  for(int h  = 0; h < YBuffJ->nbuckets; ++h) {
-      num_int_J[h] = 0;
-  }
-  for(int h  = 0; h < YBuffK->nbuckets; ++h) {
-      num_int_K[h] = 0;
-  }
+//DEBUG  num_int_J = init_int_array(YBuffJ->nbuckets);
+//DEBUG  num_int_K = init_int_array(YBuffK->nbuckets);
+//DEBUG
+//DEBUG  for(int h  = 0; h < YBuffJ->nbuckets; ++h) {
+//DEBUG      num_int_J[h] = 0;
+//DEBUG  }
+//DEBUG  for(int h  = 0; h < YBuffK->nbuckets; ++h) {
+//DEBUG      num_int_K[h] = 0;
+//DEBUG  }
 
   if (printflag) {
     outfile->Printf( "Yoshimine rdtwo routine entered\n");
@@ -719,8 +717,6 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
 
       value = ERIIN.values[i];
       fi += 4;
-
-      // Need to add the logic for symmetry of the indices here
 
       // K for first sort IKJL
       if ((isym == ksym) && (jsym == lsym)) {
@@ -777,8 +773,8 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
             outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
                     iabs, jabs, kabs, labs, ijkl, value) ;
 
-          // Now we do the second sort for K (ILJK), which apparently should
-          // be in there.
+          // Now we do the second sort for K (ILJK), which should
+          // be in there for symmetry reasons.
 
           if((irel != jrel) && (krel != lrel)) {
               if((isym == lsym) && (jsym == ksym)) {
@@ -810,8 +806,6 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
 
               }
           }
-      } else if((isym == lsym) && (jsym == ksym)) {
-          outfile->Printf("This integral should be in K 2nd sort\n");
       }
       if ((tmpi_J + 1) == YBuffJ->bucketsize) { /* need to flush bucket to disk */
         flush_bucket(bptr_J, 0);
@@ -1732,7 +1726,7 @@ void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_b
               hipq, so2ind, so2sym, pksymoff, ioff, (print_lvl > 4), "outfile");
       // Since everything is in triangle form, we can totally get the size
       nintegrals = ioff[hipq + 1] - ioff[lopq];
-      outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);
+//DEBUG      outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);
       if (is_exch) {
         sprintf(label,"K Block (Batch %d)", i);
       } else {
@@ -1740,7 +1734,6 @@ void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_b
       }
       psio->write_entry(out_tape, label, (char*)twoel_ints, nintegrals * sizeof(double));
       if(i < YBuff->core_loads - 1) {
-          outfile->Printf("Zeroing twoelints\n");
         zero_arr(twoel_ints, batch_size);
       }
       iwl_buf_close(&inbuf, keep_bins);

@@ -100,8 +100,8 @@ void PKJK::preiterations()
     //TODO: Delete the following ?
     so2symblk_ = new int[nso];
     so2index_  = new int[nso];
-    size_t so_count = 0;
-    size_t offset = 0;
+    int so_count = 0;
+    int offset = 0;
     for (int h = 0; h < nirreps; ++h) {
         for (int i = 0; i < sopi[h]; ++i) {
             so2symblk_[so_count] = h;
@@ -117,7 +117,6 @@ void PKJK::preiterations()
     for(int h = 1; h < nirreps; ++h)
         orb_offset[h] = orb_offset[h-1] + sopi[h-1];
 
-    //TODO: Eliminate pk_symoffset, we still need pk_pairs though.
     // Compute PK symmetry mapping
     int *pk_symoffset = new int[nirreps];
     pk_size_ = 0;  // Size of PK matrix triangle, i.e. ncol*(ncol - 1)/2 + ncol
@@ -152,6 +151,7 @@ void PKJK::preiterations()
             }
         }
     }
+    delete [] orb_offset;
 
     // We need to access the option object to just get a few values
 
@@ -186,17 +186,17 @@ void PKJK::preiterations()
     // Integral tolerance
     double tolerance = options.get_double("INTS_TOLERANCE");
 
-    outfile->Printf("The pk_sort_mem is %i doubles, there are %i max_buckets\n", pk_sort_mem, max_buckets);
-    outfile->Printf("The first tmp file is %i and the integral tolerance %f\n", first_tmp_file_J, tolerance);
+//DEBUG    outfile->Printf("The pk_sort_mem is %li doubles, there are %i max_buckets\n", pk_sort_mem, max_buckets);
+//DEBUG    outfile->Printf("The first tmp file is %i and the integral tolerance %f\n", first_tmp_file_J, tolerance);
     transqt::yosh_init_pk(&YBuffJ, pk_pairs_, pk_presort_mem, pk_sort_mem,
                       max_buckets, first_tmp_file_J, tolerance, "outfile");
     int first_tmp_file_K = first_tmp_file_J + YBuffJ.nbuckets;
-    outfile->Printf("The first tmp K file is %i \n", first_tmp_file_K);
+//DEBUG    outfile->Printf("The first tmp K file is %i \n", first_tmp_file_K);
     transqt::yosh_init_pk(&YBuffK, pk_pairs_, pk_presort_mem, pk_sort_mem,
                       max_buckets, first_tmp_file_K, tolerance, "outfile");
 
-    transqt::yosh_print(&YBuffJ, "outfile");
-    transqt::yosh_print(&YBuffK, "outfile");
+//DEBUG    transqt::yosh_print(&YBuffJ, "outfile");
+//DEBUG    transqt::yosh_print(&YBuffK, "outfile");
 
     // We copy the bucket info into our local arrays for later retrieval.
     // Low and high pq indices and number of buckets should be the same
@@ -204,6 +204,7 @@ void PKJK::preiterations()
 
     int nbatches      = YBuffJ.nbuckets;
     size_t totally_symmetric_pairs = pairpi[0];
+    delete [] pairpi;
     batch_pq_min_.clear();
     batch_pq_max_.clear();
     batch_index_min_.clear();
@@ -213,8 +214,8 @@ void PKJK::preiterations()
         int hipq = YBuffJ.buckets[i].hi;
         batch_pq_min_.push_back(lowpq);
         batch_pq_max_.push_back(++hipq);
-        batch_index_min_.push_back( (lowpq + 1) * lowpq / 2);
-        batch_index_max_.push_back((hipq *(hipq + 1) / 2));
+        batch_index_min_.push_back( (size_t)(lowpq + 1L) * (size_t)lowpq / 2L);
+        batch_index_max_.push_back((size_t)hipq * (size_t)(hipq + 1L) / 2L);
     }
 
     for(int batch = 0; batch < nbatches; ++batch){
@@ -253,15 +254,18 @@ void PKJK::preiterations()
 
     psio_->open(pk_file_, PSIO_OPEN_NEW);
 
-    outfile->Printf("Just before sorting\n");
+//DEBUG    outfile->Printf("Just before sorting\n");
     transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, so2index_, so2symblk_,
                           pk_symoffset, ioff, (debug_ > 5));
     transqt::yosh_sort_pk(&YBuffK, 1, pk_file_, 0, so2index_, so2symblk_,
                           pk_symoffset, ioff, (debug_ > 5));
-//    transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, ioff, 6);
+
+    psio_->close(pk_file_, 1);
+
+    transqt::yosh_done(&YBuffJ);
+    transqt::yosh_done(&YBuffK);
 
     delete [] ioff;
-
 
 
     // We might want to only build p in future...
@@ -456,8 +460,8 @@ void PKJK::preiterations()
     delete [] orb_offset;
 
 //    if(!file_was_open);
- */       psio_->close(pk_file_, 1);
-
+        psio_->close(pk_file_, 1);
+*/
 }
 
 void PKJK::compute_JK()

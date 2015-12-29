@@ -577,12 +577,9 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
               rs = ioff[MAX0(rrel, srel)] + MIN0(rrel, srel);
               rs += pksymoff[rsym];
               pqrs = ioff[MAX0(pq, rs)] + MIN0(pq,rs);
-              if (pqrs > maxind || (pqrs < offset)) {
-                  outfile->Printf("pqrs is out of bounds for J\n");
-              }
-              //if (printflg && ints[pqrs-offset] != 0.0)
-              //   printer->Printf( "Adding %10.6f to el %d %d %d %d = %10.6f\n",
-              //           valptr[Inbuf->idx], pabs, qabs, rabs, sabs, ints[pqrs-offset]);
+//DEBUG              if (pqrs > maxind || (pqrs < offset)) {
+//DEBUG                  outfile->Printf("pqrs is out of bounds for J\n");
+//DEBUG              }
               ints[pqrs - offset] += valptr[Inbuf->idx];
 
           } else {
@@ -595,14 +592,12 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
                           rs = ioff[MAX0(qrel, rrel)] + MIN0(qrel, rrel);
                           rs += pksymoff[rsym];
                           pqrs = ioff[MAX0(pq, rs)] + MIN0(pq, rs);
-                          if ((pqrs > maxind) || (pqrs < offset)) {
-                              outfile->Printf("pqrs is out of bounds\n");
-                          } else {
-                          if(prel == srel || qrel == rrel) {
-                              ints[pqrs - offset] += valptr[Inbuf->idx];
-                          } else {
-                              ints[pqrs - offset] += 0.5 * valptr[Inbuf->idx];
-                          }
+                          if ((pqrs <= maxind) && (pqrs >= offset)) {
+                              if(prel == srel || qrel == rrel) {
+                                  ints[pqrs - offset] += valptr[Inbuf->idx];
+                              } else {
+                                  ints[pqrs - offset] += 0.5 * valptr[Inbuf->idx];
+                              }
                           }
                       }
                   }
@@ -614,14 +609,12 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
                   rs = ioff[MAX0(qrel, srel)] + MIN0(qrel, srel);
                   rs += pksymoff[ssym];
                   pqrs = ioff[MAX0(pq, rs)] + MIN0(pq, rs);
-                  if (pqrs > maxind || (pqrs < offset)) {
-                      outfile->Printf("pqrs is out of bounds\n");
-                  } else {
-                  if((prel == rrel) || (qrel == srel)) {
-                      ints[pqrs - offset] += valptr[Inbuf->idx];
-                  } else {
-                      ints[pqrs - offset] += 0.5 * valptr[Inbuf->idx];
-                  }
+                  if ((pqrs <= maxind) && (pqrs >= offset) ) {
+                      if((prel == rrel) || (qrel == srel)) {
+                          ints[pqrs - offset] += valptr[Inbuf->idx];
+                      } else {
+                          ints[pqrs - offset] += 0.5 * valptr[Inbuf->idx];
+                      }
                   }
               }
 
@@ -639,7 +632,7 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
        ints[pqrs - offset] *= 0.5;
    }
 
-   outfile->Printf("Final pqrs value %i\n", pqrs);
+//DEBUG   outfile->Printf("Final pqrs value %i\n", pqrs);
    /* That's all we do here. The integral array is now ready
     * to be written in the appropriate file. */
 
