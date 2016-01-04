@@ -49,17 +49,25 @@
 #include <psifiles.h>
 #define YEXTERN
 #include "yoshimine.h"
-#include "MOInfo.h"
+
+#include <JGtimer.h>
 
 #include <boost/shared_ptr.hpp>
 
 namespace psi { namespace transqt {
 
-extern struct MOInfo moinfo;
 
 #define MIN0(a,b) (((a)<(b)) ? (a) : (b))
 #define MAX0(a,b) (((a)>(b)) ? (a) : (b))
 #define INDEX(i,j) ((i>j) ? (ioff[(i)]+(j)) : (ioff[(j)]+(i)))
+
+#if !defined( EXPLICIT_IOFF )
+#   define EXPLICIT_IOFF(i) ( (i) * ((i) + 1) / 2 )
+#endif
+
+#if !defined( INDEX2 )
+#   define INDEX2(i, j) ( (i) >= (j) ? EXPLICIT_IOFF(i) + (j) : EXPLICIT_IOFF(j) + (i) )
+#endif
 
 /*
 ** YOSH_INIT(): This function initializes a Yoshimine sort object.
@@ -286,11 +294,16 @@ void yosh_init_buckets(struct yoshimine *YBuff)
   int i;
 
    for (i=0; i<(YBuff->nbuckets); i++) {
-      YBuff->buckets[i].p = init_int_array(YBuff->bucketsize);
-      YBuff->buckets[i].q = init_int_array(YBuff->bucketsize);
-      YBuff->buckets[i].r = init_int_array(YBuff->bucketsize);
-      YBuff->buckets[i].s = init_int_array(YBuff->bucketsize);
-      YBuff->buckets[i].val = init_array(YBuff->bucketsize);
+//      YBuff->buckets[i].p = init_int_array(YBuff->bucketsize);
+//      YBuff->buckets[i].q = init_int_array(YBuff->bucketsize);
+//      YBuff->buckets[i].r = init_int_array(YBuff->bucketsize);
+//      YBuff->buckets[i].s = init_int_array(YBuff->bucketsize);
+//      YBuff->buckets[i].val = init_array(YBuff->bucketsize);
+      YBuff->buckets[i].p = (int*)malloc(YBuff->bucketsize * sizeof(int));
+      YBuff->buckets[i].q = (int*)malloc(YBuff->bucketsize * sizeof(int));
+      YBuff->buckets[i].r = (int*)malloc(YBuff->bucketsize * sizeof(int));
+      YBuff->buckets[i].s = (int*)malloc(YBuff->bucketsize * sizeof(int));
+      YBuff->buckets[i].val = (double*)malloc(YBuff->bucketsize * sizeof(double));
       iwl_buf_init(&(YBuff->buckets[i].IWLBuf),YBuff->first_tmp_file+i,
                    YBuff->cutoff,0, 0);
       }
@@ -335,6 +348,8 @@ void yosh_close_buckets(struct yoshimine *YBuff, int erase)
 {
    int i;
 
+   timJG tclose;
+   tclose.start();
    for (i=0; i<YBuff->nbuckets; i++) { /* close but keep */
       iwl_buf_close(&(YBuff->buckets[i].IWLBuf), !erase);
       free(YBuff->buckets[i].p);
@@ -343,6 +358,7 @@ void yosh_close_buckets(struct yoshimine *YBuff, int erase)
       free(YBuff->buckets[i].s);
       free(YBuff->buckets[i].val);
       }
+   tclose.stop("Time to close IWL buckets");
 }
 
 
@@ -655,23 +671,23 @@ void yosh_rdtwo(struct yoshimine *YBuff, int itapERI, int del_tei_file, int *num
 **   printflag    = 1 for printing (for debugging only!) else 0
 */
 void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapERI,
-      int del_tei_file, int nirreps, int* so2rel, int* so2sym, int* pksymoff, int *ioff, int printflag)
+      int del_tei_file, int nirreps, int* so2rel, int* so2sym, int* pksymoff, int printflag)
 {
   int ilsti, nbuf;
-  int i, ij, kl, ijkl;
-  int ik, il;
+  int i;
   int iabs, jabs, kabs, labs ;
   int irel, jrel, krel, lrel;
   int isym, jsym, ksym, lsym;
   double value;
   int *tmp;
   struct bucket *bptr_J, *bptr_K1, *bptr_K2 ;
+  long unsigned int ij, kl, ijkl, ik, il;
   long int tmpi_J, tmpi_K1, tmpi_K2;
   int whichbucket_J, whichbucket_K1, whichbucket_K2, firstfile_J, firstfile_K;
   int fi;
   struct iwlbuf ERIIN;
-  int* num_int_J;
-  int* num_int_K;
+//DEBUG  int* num_int_J;
+//DEBUG  int* num_int_K;
 
 //DEBUG  num_int_J = init_int_array(YBuffJ->nbuckets);
 //DEBUG  num_int_K = init_int_array(YBuffK->nbuckets);
@@ -683,6 +699,10 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
 //DEBUG      num_int_K[h] = 0;
 //DEBUG  }
 
+  timJG tread;
+  timJG twriteJ;
+  timJG twriteK;
+
   if (printflag) {
     outfile->Printf( "Yoshimine rdtwo routine entered\n");
     outfile->Printf( "Two-electron integrals from file%d:\n",itapERI);
@@ -691,7 +711,9 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
   firstfile_J = YBuffJ->first_tmp_file;
   firstfile_K = YBuffK->first_tmp_file;
 
+  tread.start();
   iwl_buf_init(&ERIIN,itapERI,0.0,1,1);
+  tread.cumulate();
 
   do {
     /* read a buffer full */
@@ -721,7 +743,7 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
       // K for first sort IKJL
       if ((isym == ksym) && (jsym == lsym)) {
           /* Calculate ik for exchange buckets */
-          ik = ioff[irel] + krel;
+          ik = INDEX2(irel, krel);
           ik += pksymoff[isym];
 
           /* figure out what bucket to put it in, and do so
@@ -739,23 +761,19 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
           bptr_K1->s[tmpi_K1] = labs;
 
           bptr_K1->val[tmpi_K1] = value;
-          num_int_K[whichbucket_K1]++;
-      }
-      if ((tmpi_K1 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
-          flush_bucket(bptr_K1, 0);
-          bptr_K1->in_bucket = 0;
+//DEBUG          num_int_K[whichbucket_K1]++;
       }
 
 
       // We need the symmetry offset to get pqrs properly.
       if((isym == jsym) && (ksym == lsym)) {
           /* calculate ijkl lexical index */
-          ij = ioff[irel] + jrel;
+          ij = INDEX2(irel, jrel);
           ij += pksymoff[isym];
-          kl = ioff[krel] + lrel;
+          kl = INDEX2(krel, lrel);
           kl += pksymoff[ksym];
           // ijkl only here for debug printing
-          ijkl = ioff[ij] + kl;
+          ijkl = INDEX2(ij, kl);
           whichbucket_J = YBuffJ->bucket_for_pq[ij] ;
           bptr_J = YBuffJ->buckets + whichbucket_J ;
           tmpi_J = (bptr_J->in_bucket)++ ;
@@ -767,7 +785,7 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
           bptr_J->s[tmpi_J] = labs;
 
           bptr_J->val[tmpi_J] = value;
-          num_int_J[whichbucket_J]++;
+//DEBUG          num_int_J[whichbucket_J]++;
 
           if (printflag)
             outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
@@ -779,7 +797,7 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
           if((irel != jrel) && (krel != lrel)) {
               if((isym == lsym) && (jsym == ksym)) {
                   /* Calculate il for exchange buckets */
-                  il = ioff[irel] + lrel;
+                  il = INDEX2(irel, lrel);
                   il += pksymoff[isym];
 
                   // outfile->Printf("ik is %i and il is %i\n", ik, il);
@@ -796,10 +814,12 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
                       bptr_K2->s[tmpi_K2] = labs;
 
                       bptr_K2->val[tmpi_K2] = value;
-                      num_int_K[whichbucket_K2]++;
+//DEBUG                      num_int_K[whichbucket_K2]++;
 
                       if ((tmpi_K2 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+                          twriteK.start();
                           flush_bucket(bptr_K2, 0);
+                          twriteK.cumulate();
                           bptr_K2->in_bucket = 0;
                       }
                   }
@@ -807,13 +827,24 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
               }
           }
       }
+      if ((tmpi_K1 + 1) == YBuffK->bucketsize) { /* need to flush bucket to disk */
+          twriteK.start();
+          flush_bucket(bptr_K1, 0);
+          twriteK.cumulate();
+          bptr_K1->in_bucket = 0;
+      }
       if ((tmpi_J + 1) == YBuffJ->bucketsize) { /* need to flush bucket to disk */
+          twriteJ.start();
         flush_bucket(bptr_J, 0);
+        twriteJ.cumulate();
         bptr_J->in_bucket = 0;
       }
     }
-    if (!ilsti)
+    if (!ilsti) {
+        tread.start();
       iwl_buf_fetch(&ERIIN);
+      tread.cumulate();
+    }
   } while(!ilsti);
 
   /* flush partially filled buckets */
@@ -828,24 +859,34 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
    * currently work.  Make sure to be careful if rewriting iwl routines!
    */
   for (i=0; i<YBuffJ->nbuckets; i++) {
+      twriteJ.start();
     flush_bucket((YBuffJ->buckets)+i, 1);
+    twriteJ.cumulate();
   }
 
   for (i=0; i<YBuffK->nbuckets; i++) {
+      twriteK.start();
     flush_bucket((YBuffK->buckets)+i, 1);
+    twriteK.cumulate();
   }
 
-  for (int h = 0; h < YBuffJ->nbuckets; ++h) {
-      outfile->Printf("We wrote %i integrals in J bucket %i\n", num_int_J[h], h);
-  }
-  for (int h = 0; h < YBuffK->nbuckets; ++h) {
-      outfile->Printf("We wrote %i integrals in K bucket %i\n", num_int_K[h], h);
-  }
+//DEBUG  for (int h = 0; h < YBuffJ->nbuckets; ++h) {
+//DEBUG      outfile->Printf("We wrote %i integrals in J bucket %i\n", num_int_J[h], h);
+//DEBUG  }
+//DEBUG  for (int h = 0; h < YBuffK->nbuckets; ++h) {
+//DEBUG      outfile->Printf("We wrote %i integrals in K bucket %i\n", num_int_K[h], h);
+//DEBUG  }
 
-  free(num_int_J);
-  free(num_int_K);
+//DEBUG  free(num_int_J);
+//DEBUG  free(num_int_K);
 
+  tread.start();
   iwl_buf_close(&ERIIN, !del_tei_file);
+  tread.cumulate();
+  tread.print("Read original IWL file");
+
+  twriteJ.print("J IWL bucket write");
+  twriteK.print("K IWL bucket write");
 }
 
 /*
@@ -1169,389 +1210,6 @@ void yosh_rdtwo_uhf(struct yoshimine *YBuff, int itapERI, int del_tei_file, int 
 }
 
 /*
-** YOSH_RDTWO_BACKTR() : Read two-electron integrals from an IWL file and
-**    prepare them for Yoshimine sorting.   We have removed support for
-**    Elbert loops and frozen core, since the former is not currently
-**    being used and the latter should not apply to backtransforms.
-**    The main issue is whether we need to symmetrize the twopdm, or
-**    whether it has already been symmetrized.  We assume that it always
-**    has the symmetry (pq|rs) = (rs|pq), but it may not have the other
-**    left-pair and right-pair permutational symmetries (the CI twopdm
-**    for example does not have this symmetry naturally).  The transform
-**    needs this symmetry (as does the derivative program), so we will
-**    enforce it here if the user specifies.  We currently assume that
-**    the tpdm on disk has only unique (pq|rs) pairs, and so for our
-**    purposes we need to generate (rs|pq) just like we do when reading
-**    the AO integrals in the regular forwards transform.
-**
-** Based on the YOSH_RDTWO34() function
-** C. David Sherrill
-** Created August 1997
-**
-** Arguments:
-**   YBuff        = Yoshimine object pointer
-**   tei_file     = unit number for two-electron integrals
-**   ioff         = standard lexical index array
-**   symmetrize   = symmetrize the incoming 2pdm
-**   add_ref_pt   = Add the factors arising from a reference determinant
-**                  (n.b. assumes lowest MO's occupied)
-**   del_tei_file = 1 to delete the tei file, 0 otherwise
-**   printflag    = 1 for printing (for debugging only!) else 0
-**   outfile      = file to print integrals to (if printflag is set)
-*/
-void yosh_rdtwo_backtr(struct yoshimine *YBuff, int tei_file, int *ioff,
-                       int symmetrize, int add_ref_pt, int del_tei_file,
-                       int printflag, std::string OutFileRMR)
-{
-  int i, ij, kl, ijkl;
-  int iabs, jabs, kabs, labs;
-  double value;
-  struct bucket *bptr;
-  int whichbucket, lastbuf, idx;
-  long int tmpi;
-  struct iwlbuf Inbuf;
-  Value *valptr;
-  Label *lblptr;
-
-  if (printflag) {
-    outfile->Printf( "Yoshimine rdtwo_backtr routine entered\n");
-    outfile->Printf( "Two-particle density from file %d:\n", tei_file);
-  }
-
-  iwl_buf_init(&Inbuf, tei_file, YBuff->cutoff, 1, 0);
-  lblptr = Inbuf.labels;
-  valptr = Inbuf.values;
-
-  do {
-    iwl_buf_fetch(&Inbuf);
-    lastbuf = Inbuf.lastbuf;
-    for (idx=4*Inbuf.idx; Inbuf.idx < Inbuf.inbuf; Inbuf.idx++) {
-      iabs = (int) lblptr[idx++];
-      jabs = (int) lblptr[idx++];
-      kabs = (int) lblptr[idx++];
-      labs = (int) lblptr[idx++];
-
-      iabs = moinfo.corr2pitz_nofzv[iabs];
-      jabs = moinfo.corr2pitz_nofzv[jabs];
-      kabs = moinfo.corr2pitz_nofzv[kabs];
-      labs = moinfo.corr2pitz_nofzv[labs];
-
-      value = valptr[Inbuf.idx];
-      if (symmetrize) {
-        if (iabs != jabs) value *= 0.5;
-        if (kabs != labs) value *= 0.5;
-      }
-
-      /* calculate ijkl lexical index (make no i>=j assumptions for now) */
-      ij = INDEX(iabs,jabs);
-      kl = INDEX(kabs,labs);
-      ijkl = INDEX(ij,kl);  /* ijkl needed only in the print routine */
-
-      /* figure out what bucket to put it in, and do so */
-
-      whichbucket = YBuff->bucket_for_pq[ij];
-      bptr = YBuff->buckets+whichbucket;
-      tmpi = (bptr->in_bucket)++;
-      bptr->p[tmpi] = iabs;
-      bptr->q[tmpi] = jabs;
-      bptr->r[tmpi] = kabs;
-      bptr->s[tmpi] = labs;
-      bptr->val[tmpi] = value;
-
-      if (printflag)
-        outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
-                iabs, jabs, kabs, labs, ijkl, value) ;
-      if ((tmpi+1) == YBuff->bucketsize) { /* need to flush bucket to disk */
-        flush_bucket(bptr, 0);
-        bptr->in_bucket = 0;
-      }
-
-
-      /* this generates (kl|ij) from (ij|kl) if necessary and puts it out */
-      /* anaglogous to the "matrix" option in yosh_rdtwo()              */
-      if (iabs != kabs || jabs != labs) {
-        whichbucket = YBuff->bucket_for_pq[kl];
-        bptr = YBuff->buckets+whichbucket;
-        tmpi = (bptr->in_bucket)++;
-        bptr->p[tmpi] = kabs;
-        bptr->q[tmpi] = labs;
-        bptr->r[tmpi] = iabs;
-        bptr->s[tmpi] = jabs;
-        bptr->val[tmpi] = value;
-        if (printflag)
-          outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
-                  kabs, labs, iabs, jabs, ijkl, value) ;
-        if ((tmpi+1) == YBuff->bucketsize) {
-          flush_bucket(bptr, 0);
-          bptr->in_bucket = 0;
-        }
-      }
-
-    }
-
-  } while(!lastbuf);
-
-  /* now add in contributions from the reference determinant if requested */
-  if (add_ref_pt) add_2pdm_ref_pt(YBuff, ioff, printflag, "outfile");
-
-  /* flush partially filled buckets */
-  for (i=0; i<YBuff->nbuckets; i++) {
-    flush_bucket((YBuff->buckets)+i, 1);
-  }
-
-  iwl_buf_close(&Inbuf, !del_tei_file);
-}
-
-/*
-** YOSH_RDTWO_BACKTR_UHF() : Read two-particle density elements from
-** an IWL file and prepare them for Yoshimine sorting.  The sorted
-** twopdm elements, G(pqrs), produced by this code have unique p-q and
-** r-s combinations, but no pq-rs packing.  However, the input
-** twopdm's may not have this same structure, so the boolean arguments
-** swap_bk and symm_pq are used to correct this problem.  There are
-** two circumstances to consider:
-**
-** (1) If the MO twopdm lacks pq-rs symmetry (e.g., the AB twopdm),
-** its input file should include all rs for each pq.  The swap_bk flag
-** should be set to "0" in this case so that no "extra" G(rs,pq)
-** components are written to the sorting buffers.  If the input twopdm
-** has pq-rs symmetry (e.g., the AA and BB twopdms), only unique pq-rs
-** combinations should be included and the swap_bk flag should be set
-** to "1".
-**
-** (2) If the MO density lacks p-q and r-s symmetry, the input file
-** should include all combinations of p,q and r,s, and the symm_pq
-** flag should be set to "1".  If the MO density has p-q and r-s
-** symmetry, then its input file should include only unique p,q and
-** r,s combinations, and the symm_pq flag should be set to "0".
-**
-** Note that "intermediate" symmetry cases, where the MO twopdm has
-** p-q symmetry but not r-s symmetry, for example, are not included
-** here.
-**
-** Also, this code assumes the input indices are in QTS ordering and
-** converts them automatically to Pitzer.
-**
-** TDC, 1/03
-**
-** Based on the YOSH_RDTWO_BACKTR() function above by
-** C. David Sherrill
-**
-** Arguments:
-**   YBuff        = Yoshimine object pointer
-**   tei_file     = unit number for two-electron integrals
-**   ioff         = standard lexical index array
-**   swap_bk      = sort both G(pq,rs) and G(rs,pq) combinations
-**   symm_pq      = symmetrize both p,q and r,s combinations
-**   del_tei_file = 1 to delete the tei file, 0 otherwise
-**   printflag    = 1 for printing (for debugging only!) else 0
-**   outfile      = file to print integrals to (if printflag is set)
-*/
-void yosh_rdtwo_backtr_uhf(std::string spin, struct yoshimine *YBuff, int tei_file, int *ioff,
-                           int swap_bk, int symm_pq, int del_tei_file,
-                           int printflag, std::string OutFileRMR)
-{
-  int i, ij, kl, ijkl;
-  int iabs, jabs, kabs, labs;
-  double value;
-  struct bucket *bptr;
-  int whichbucket, lastbuf, idx;
-  long int tmpi;
-  struct iwlbuf Inbuf;
-  Value *valptr;
-  Label *lblptr;
-  int *iorder, *jorder, *korder, *lorder;
-
-  if (printflag) {
-    outfile->Printf( "Yoshimine rdtwo_backtr routine entered\n");
-    outfile->Printf( "Two-particle density from file %d:\n", tei_file);
-  }
-
-  if(spin == "AA") {
-    iorder = moinfo.corr2pitz_nofzv_a;
-    jorder = moinfo.corr2pitz_nofzv_a;
-    korder = moinfo.corr2pitz_nofzv_a;
-    lorder = moinfo.corr2pitz_nofzv_a;
-  }
-  else if(spin == "BB") {
-    iorder = moinfo.corr2pitz_nofzv_b;
-    jorder = moinfo.corr2pitz_nofzv_b;
-    korder = moinfo.corr2pitz_nofzv_b;
-    lorder = moinfo.corr2pitz_nofzv_b;
-  }
-  else if(spin == "AB") {
-    iorder = moinfo.corr2pitz_nofzv_a;
-    jorder = moinfo.corr2pitz_nofzv_a;
-    korder = moinfo.corr2pitz_nofzv_b;
-    lorder = moinfo.corr2pitz_nofzv_b;
-  }
-  else {
-    outfile->Printf( "\n\tInvalid spin cases requested for backtransformation!\n");
-    exit(PSI_RETURN_FAILURE);
-  }
-
-  iwl_buf_init(&Inbuf, tei_file, YBuff->cutoff, 1, 0);
-  lblptr = Inbuf.labels;
-  valptr = Inbuf.values;
-
-  do {
-    iwl_buf_fetch(&Inbuf);
-    lastbuf = Inbuf.lastbuf;
-    for (idx=4*Inbuf.idx; Inbuf.idx < Inbuf.inbuf; Inbuf.idx++) {
-      iabs = (int) lblptr[idx++];
-      jabs = (int) lblptr[idx++];
-      kabs = (int) lblptr[idx++];
-      labs = (int) lblptr[idx++];
-
-      iabs = iorder[iabs];
-      jabs = jorder[jabs];
-      kabs = korder[kabs];
-      labs = lorder[labs];
-
-      value = valptr[Inbuf.idx];
-
-      if (symm_pq) {
-        if (iabs != jabs) value *= 0.5;
-        if (kabs != labs) value *= 0.5;
-      }
-
-      /* calculate ijkl lexical index (make no i>=j assumptions for now) */
-      ij = INDEX(iabs,jabs);
-      kl = INDEX(kabs,labs);
-      ijkl = INDEX(ij,kl);  /* ijkl needed only in the print routine */
-
-      /* figure out what bucket to put it in, and do so */
-
-      whichbucket = YBuff->bucket_for_pq[ij];
-      bptr = YBuff->buckets+whichbucket;
-      tmpi = (bptr->in_bucket)++;
-      bptr->p[tmpi] = iabs;
-      bptr->q[tmpi] = jabs;
-      bptr->r[tmpi] = kabs;
-      bptr->s[tmpi] = labs;
-      bptr->val[tmpi] = value;
-
-      if (printflag)
-        outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
-                iabs, jabs, kabs, labs, ijkl, value) ;
-      if ((tmpi+1) == YBuff->bucketsize) { /* need to flush bucket to disk */
-        flush_bucket(bptr, 0);
-        bptr->in_bucket = 0;
-      }
-
-      /* this generates (kl|ij) from (ij|kl) if necessary and puts it out */
-      /* anaglogous to the "matrix" option in yosh_rdtwo()              */
-      if (swap_bk && (iabs != kabs || jabs != labs)) {
-        whichbucket = YBuff->bucket_for_pq[kl];
-        bptr = YBuff->buckets+whichbucket;
-        tmpi = (bptr->in_bucket)++;
-        bptr->p[tmpi] = kabs;
-        bptr->q[tmpi] = labs;
-        bptr->r[tmpi] = iabs;
-        bptr->s[tmpi] = jabs;
-        bptr->val[tmpi] = value;
-        if (printflag)
-          outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
-                  kabs, labs, iabs, jabs, ijkl, value) ;
-        if ((tmpi+1) == YBuff->bucketsize) {
-          flush_bucket(bptr, 0);
-          bptr->in_bucket = 0;
-        }
-      }
-
-    }
-
-  } while(!lastbuf);
-
-  /* flush partially filled buckets */
-  for (i=0; i<YBuff->nbuckets; i++) {
-    flush_bucket((YBuff->buckets)+i, 1);
-  }
-
-  iwl_buf_close(&Inbuf, !del_tei_file);
-}
-
-/*
-** ADD_2PDM_REF_PT
-**
-** This function adds in the contributions to the two-particle density
-** matrix from the reference determinant, as might be required in MBPT
-** or CC theory.  Assume the reference is made up of the lowest-lying
-** orbitals as specified by DOCC and SOCC arrays.  Assume restricted
-** orbitals.   Assume correlated ordering is docc, socc, virt...may
-** not always be true, but order array is already wiped out by this
-** point for backtransforms, would have to fetch it again.
-**
-** David Sherrill, Feb 1998
-*/
-void add_2pdm_ref_pt(struct yoshimine *YBuff, int *ioff, int pflg,
-                     std::string OutFileRMR)
-{
-   int i, j, ii, jj, ij;
-   int iabs, jabs;
-   int ndocc, nsocc;
-
-   ndocc = moinfo.ndocc;  nsocc = moinfo.nsocc;
-
-   /* closed-shell part */
-   for (i=0; i<ndocc; i++) {
-     iabs = moinfo.corr2pitz_nofzv[i];
-     ii = ioff[iabs] + iabs;
-
-     for (j=0; j<i; j++) {
-       jabs = moinfo.corr2pitz_nofzv[j];
-       jj = ioff[jabs] + jabs;
-       ij = ioff[iabs] + jabs;
-
-       yosh_buff_put_val(YBuff,ioff,ii,iabs,iabs,jabs,jabs, 2.0,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,jj,jabs,jabs,iabs,iabs, 2.0,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,ij,iabs,jabs,jabs,iabs,-0.25,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,ij,jabs,iabs,iabs,jabs,-0.25,pflg,"outfile");
-
-     }
-
-     jabs = moinfo.corr2pitz_nofzv[j];
-     jj = ioff[jabs] + jabs;
-     ij = ioff[iabs] + jabs;
-     yosh_buff_put_val(YBuff,ioff,ii,iabs,iabs,jabs,jabs, 1.0,pflg,"outfile");
-
-   }
-
-
-   /* open-shell part, if any */
-   for (i=ndocc; i<ndocc+nsocc; i++) {
-     iabs = moinfo.corr2pitz_nofzv[i];
-     ii = ioff[iabs] + iabs;
-
-     for (j=0; j<ndocc; j++) {
-       jabs = moinfo.corr2pitz_nofzv[j];
-       jj = ioff[jabs] + jabs;
-       ij = ioff[iabs] + jabs;
-
-       yosh_buff_put_val(YBuff,ioff,ii,iabs,iabs,jabs,jabs, 1.0,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,jj,jabs,jabs,iabs,iabs, 1.0,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,ij,iabs,jabs,jabs,iabs,-0.125,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,ij,jabs,iabs,iabs,jabs,-0.125,pflg,"outfile");
-     }
-
-     for (j=ndocc; j<i; j++) {
-       jabs = moinfo.corr2pitz_nofzv[j];
-       jj = ioff[jabs] + jabs;
-       ij = ioff[iabs] + jabs;
-
-       yosh_buff_put_val(YBuff,ioff,ii,iabs,iabs,jabs,jabs, 0.5,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,jj,jabs,jabs,iabs,iabs, 0.5,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,ij,iabs,jabs,jabs,iabs,-0.125,pflg,"outfile");
-       yosh_buff_put_val(YBuff,ioff,ij,jabs,iabs,iabs,jabs,-0.125,pflg,"outfile");
-     }
-
-   }
-
-}
-
-
-
-/*
 ** YOSH_BUFF_PUT_VAL
 **
 ** This function puts a value and its associated indices to a yoshimine
@@ -1697,21 +1355,23 @@ void yosh_sort(struct yoshimine *YBuff, int out_tape, int keep_bins,
 ** Returns: none
 */
 void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_bins,
-      int* so2ind, int* so2sym, int* pksymoff, int* ioff, int print_lvl)
+      int* so2ind, int* so2sym, int* pksymoff, int print_lvl)
 {
    size_t batch_size = 0;
-   size_t nintegrals;
+   size_t hipq, lopq, nintegrals;
    double *twoel_ints;
-   int lopq, hipq, i;
+   int i;
    boost::shared_ptr<PSIO> psio = _default_psio_lib_;
    char* label = new char[100];
    struct iwlbuf inbuf;
 
+   timJG twrite;
+   timJG tread;
    // We compute the maximum batch size
    for(int i = 0; i < YBuff->nbuckets; ++i) {
        lopq = YBuff->buckets[i].lo;
        hipq = YBuff->buckets[i].hi + 1;
-       nintegrals = ioff[hipq] - ioff[lopq];
+       nintegrals = (hipq * (hipq + 1)) / 2 - (lopq * (lopq + 1) / 2);
        if (nintegrals > batch_size) batch_size = nintegrals;
    }
 
@@ -1721,23 +1381,31 @@ void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_b
       if (print_lvl > 1) outfile->Printf( "Sorting bin %d\n", i+1);
       lopq = YBuff->buckets[i].lo;
       hipq = YBuff->buckets[i].hi;
+      tread.start();
       iwl_buf_init(&inbuf, YBuff->first_tmp_file+i, YBuff->cutoff, 1, 0);
+      tread.cumulate();
       sortbuf_pk(&inbuf, out_tape, is_exch, twoel_ints, lopq,
-              hipq, so2ind, so2sym, pksymoff, ioff, (print_lvl > 4), "outfile");
+              hipq, so2ind, so2sym, pksymoff, (print_lvl > 4), "outfile");
       // Since everything is in triangle form, we can totally get the size
-      nintegrals = ioff[hipq + 1] - ioff[lopq];
+      ++hipq;
+      nintegrals = (hipq * (hipq + 1)) / 2 - (lopq * (lopq + 1) / 2);
 //DEBUG      outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);
       if (is_exch) {
         sprintf(label,"K Block (Batch %d)", i);
       } else {
         sprintf(label,"J Block (Batch %d)", i);
       }
+      twrite.start();
       psio->write_entry(out_tape, label, (char*)twoel_ints, nintegrals * sizeof(double));
+      twrite.stop("Writing one PK batch");
       if(i < YBuff->core_loads - 1) {
         zero_arr(twoel_ints, batch_size);
       }
+      tread.start();
       iwl_buf_close(&inbuf, keep_bins);
+      tread.cumulate();
    }
+   tread.print("Opening/closing IWL buckets");
 
 
    if (print_lvl > 1) outfile->Printf( "Done sorting.\n");

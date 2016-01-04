@@ -30,10 +30,19 @@
 #include "iwl.h"
 #include "iwl.hpp"
 #include "libparallel/ParallelPrinter.h"
+#include <JGtimer.h>
 #define MIN0(a,b) (((a)<(b)) ? (a) : (b))
 #define MAX0(a,b) (((a)>(b)) ? (a) : (b))
 
 #define BIGNUM 40000
+
+#if !defined( EXPLICIT_IOFF )
+#   define EXPLICIT_IOFF(i) ( (i) * ((i) + 1) / 2 )
+#endif
+
+#if !defined( INDEX2 )
+#   define INDEX2(i, j) ( (i) >= (j) ? EXPLICIT_IOFF(i) + (j) : EXPLICIT_IOFF(j) + (i) )
+#endif
 
 namespace psi {
 
@@ -518,15 +527,16 @@ void sortbuf(struct iwlbuf *Inbuf, struct iwlbuf *Outbuf,
 */
 void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
       double *ints, int fpq, int lpq, int* so2ind, int* so2sym,
-      int* pksymoff, int* ioff, int printflg, std::string out)
+      int* pksymoff, int printflg, std::string out)
 {
    Value *valptr;              /* array of integral values */
    Label *lblptr;              /* array of integral labels */
    int idx;                    /* index for curr integral (0..ints_per_buf) */
    int lastbuf;                /* last buffer flag */
-   int pabs, qabs, rabs, sabs, pq, rs;
+   int pabs, qabs, rabs, sabs;
    int prel, qrel, rrel, srel, psym, qsym, rsym, ssym;
-   long int pqrs, offset, maxind;
+   unsigned long int pq, rs, pqrs, offset, maxind;
+   timJG tread;
 
    boost::shared_ptr<psi::PsiOutStream> printer=(out=="outfile"?outfile:
             boost::shared_ptr<OutFile>(new OutFile(out)));
@@ -537,9 +547,9 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
 
    // Compute the index of the lowest pq for offset
 
-   offset = ioff[fpq];
+   offset = fpq * (fpq + 1) / 2;
 
-   maxind = ioff[lpq] + lpq;
+   maxind = INDEX2(lpq, lpq);
 
    lblptr = Inbuf->labels;
    valptr = Inbuf->values;
@@ -549,7 +559,9 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
       We sort them upon reading in the twoel array */
 
    do {
+       tread.start();
       iwl_buf_fetch(Inbuf);
+      tread.cumulate();
       lastbuf = Inbuf->lastbuf;
       for (idx=4*Inbuf->idx; Inbuf->idx<Inbuf->inbuf; Inbuf->idx++) {
           pabs = (int) lblptr[idx++];
@@ -572,11 +584,11 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
           if (!is_exch) {
 
               // We only stored integrals of the relevant symmetry
-              pq = ioff[MAX0(prel, qrel)] + MIN0(prel, qrel);
+              pq = INDEX2(prel, qrel);
               pq += pksymoff[psym];
-              rs = ioff[MAX0(rrel, srel)] + MIN0(rrel, srel);
+              rs = INDEX2(rrel, srel);
               rs += pksymoff[rsym];
-              pqrs = ioff[MAX0(pq, rs)] + MIN0(pq,rs);
+              pqrs = INDEX2(pq, rs);
 //DEBUG              if (pqrs > maxind || (pqrs < offset)) {
 //DEBUG                  outfile->Printf("pqrs is out of bounds for J\n");
 //DEBUG              }
@@ -587,11 +599,11 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
               if ((psym == qsym) && (rsym == ssym)) {
                   if ( (prel != qrel) && (rrel != srel)) {
                       if((psym == ssym) && (qsym == rsym)) {
-                          pq = ioff[MAX0(prel, srel)] + MIN0(prel, srel);
+                          pq = INDEX2(prel, srel);
                           pq += pksymoff[psym];
-                          rs = ioff[MAX0(qrel, rrel)] + MIN0(qrel, rrel);
+                          rs = INDEX2(qrel, rrel);
                           rs += pksymoff[rsym];
-                          pqrs = ioff[MAX0(pq, rs)] + MIN0(pq, rs);
+                          pqrs = INDEX2(pq, rs);
                           if ((pqrs <= maxind) && (pqrs >= offset)) {
                               if(prel == srel || qrel == rrel) {
                                   ints[pqrs - offset] += valptr[Inbuf->idx];
@@ -604,11 +616,11 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
               }
               // K (1st sort, IKJL)
               if ((psym == rsym) && (qsym == ssym)) {
-                  pq = ioff[MAX0(prel, rrel)] + MIN0(prel, rrel);
+                  pq = INDEX2(prel, rrel);
                   pq += pksymoff[psym];
-                  rs = ioff[MAX0(qrel, srel)] + MIN0(qrel, srel);
+                  rs = INDEX2(qrel, srel);
                   rs += pksymoff[ssym];
-                  pqrs = ioff[MAX0(pq, rs)] + MIN0(pq, rs);
+                  pqrs = INDEX2(pq, rs);
                   if ((pqrs <= maxind) && (pqrs >= offset) ) {
                       if((prel == rrel) || (qrel == srel)) {
                           ints[pqrs - offset] += valptr[Inbuf->idx];
@@ -626,9 +638,10 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
                 pabs, qabs, rabs, sabs, pq, rs, pqrs, ints[pqrs-offset]) ;
       }
    } while (!lastbuf);
+   tread.print("Read one IWL bucket");
 
    for(pq = fpq; pq <= lpq; ++pq) {
-       pqrs = ioff[pq] + pq;
+       pqrs = INDEX2(pq, pq);
        ints[pqrs - offset] *= 0.5;
    }
 

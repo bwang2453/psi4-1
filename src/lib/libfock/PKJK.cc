@@ -37,6 +37,8 @@
 #include "points.h"
 #include "yoshimine.h"
 
+#include <JGtimer.h>
+
 #include<lib3index/cholesky.h>
 
 #include <sstream>
@@ -168,6 +170,8 @@ void PKJK::preiterations()
      available memory, because they will be used simultaneously for the pre-sorting.
      */
 
+    string algo = options.get_str("PK_ALGO");
+
     // Use a Yoshimine sorting, with objects adapted from TRANSQT implementation
     // of Yoshimine.
 
@@ -225,26 +229,32 @@ void PKJK::preiterations()
                 batch_index_min_[batch],batch_index_max_[batch]);
     }
 
+    //Now, what we are doing depends on the selected algorithm and the
+    //number of buckets needed.
+
+    if(algo == "DIRECT") {
+        if(nbatches != 1) {
+            // lol direct cannot work with 2 batches lol
+            throw PSIEXCEPTION("Direct ? With 2 batches ? lol\n");
+        } else {
+            throw PSIEXCEPTION("Not implemented yet.\n");
+        }
+    } else if (algo == "NEW") {
+       // Proceed with Yoshimine sorting.
 
     // Initiate buckets: allocate array memory and open temporary files.
 
+    timJG tbench;
+    tbench.start();
     transqt::yosh_init_buckets(&YBuffJ);
     transqt::yosh_init_buckets(&YBuffK);
 
    //Do the pre-sorting step in temporary files
 
-    // We need the stupid ioff array.
-
-    int *ioff = new int[pk_pairs_ + 1];
-    ioff[0] = 0;
-    for(int i = 1; i < pk_pairs_ + 1; ++i) {
-        ioff[i] = ioff[i - 1] + i;
-    }
-
     //TODO: Solve the double sorting of K integrals that are not in the same
     // bucket, we are writing more integrals to disk than anticipated.
     transqt::yosh_rdtwo_pk(&YBuffJ,&YBuffK,PSIF_SO_TEI, 0, nirreps, so2index_, so2symblk_,
-                           pk_symoffset, ioff, (debug_ > 5));
+                           pk_symoffset, (debug_ > 5));
 
     // Close the buckets, but keep the temp. files.
     transqt::yosh_close_buckets(&YBuffJ, 0);
@@ -256,21 +266,32 @@ void PKJK::preiterations()
 
 //DEBUG    outfile->Printf("Just before sorting\n");
     transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, so2index_, so2symblk_,
-                          pk_symoffset, ioff, (debug_ > 5));
+                          pk_symoffset, (debug_ > 5));
     transqt::yosh_sort_pk(&YBuffK, 1, pk_file_, 0, so2index_, so2symblk_,
-                          pk_symoffset, ioff, (debug_ > 5));
+                          pk_symoffset, (debug_ > 5));
 
+    tbench.stop("Creating PK file");
     psio_->close(pk_file_, 1);
 
     transqt::yosh_done(&YBuffJ);
     transqt::yosh_done(&YBuffK);
 
-    delete [] ioff;
-
+    } // End of condition for Yoshimine sorting, algo NEW
+    else if(algo == "JET") {
+        // Here we go for the old algorithm
 
     // We might want to only build p in future...
-/*    bool build_k = true;
+    bool build_k = true;
 
+    // Set up some timers
+    timJG tread;
+    timJG twriteJ;
+    timJG twriteK;
+    timJG tbench;
+
+
+    tbench.start();
+    psio_->open(pk_file_, PSIO_OPEN_NEW);
     for(int batch = 0; batch < nbatches; ++batch){
         size_t min_index   = batch_index_min_[batch];
         size_t max_index   = batch_index_max_[batch];
@@ -280,7 +301,9 @@ void PKJK::preiterations()
         ::memset(j_block, '\0', batch_size * sizeof(double));
         ::memset(k_block, '\0', batch_size * sizeof(double));
 
+        tread.start();
         IWL *iwl = new IWL(psio_.get(), PSIF_SO_TEI, cutoff_, 1, 1);
+        tread.cumulate();
         Label *lblptr = iwl->labels();
         Value *valptr = iwl->values();
         int labelIndex, pabs, qabs, rabs, sabs, prel, qrel, rrel, srel, psym, qsym, rsym, ssym;
@@ -346,9 +369,16 @@ void PKJK::preiterations()
                     }
                 }
             }
-            if (!last_buffer) iwl->fetch();
+            if (!last_buffer) {
+                tread.start();
+                iwl->fetch();
+                tread.cumulate();
+            }
         } while (!last_buffer);
+        tread.start();
         delete iwl;
+        tread.cumulate();
+        tread.print("Read original IWL file");
 
         // Halve the diagonal elements held in core
         for(size_t pq = batch_pq_min_[batch]; pq < batch_pq_max_[batch]; ++pq){
@@ -358,16 +388,24 @@ void PKJK::preiterations()
         }
 
         char *label = new char[100];
+        twriteJ.start();
         sprintf(label, "J Block (Batch %d)", batch);
         psio_->write_entry(pk_file_, label, (char*) j_block, batch_size * sizeof(double));
+        twriteJ.stop("Write J batch");
+        twriteK.start();
         sprintf(label, "K Block (Batch %d)", batch);
         psio_->write_entry(pk_file_, label, (char*) k_block, batch_size * sizeof(double));
+        twriteK.stop("WriteK batch");
         delete [] label;
 
         delete [] j_block;
         delete [] k_block;
     } // End of loop over batches
+    tbench.stop("PK file creation");
 
+    psio_->close(pk_file_, 1);
+
+    } // End of algo conditional.
     /*
      * For omega, we only need exchange and it's done separately from conventional terms, so we can
      * use fewer batches in principle.  For now we just use the batching scheme that's already been
