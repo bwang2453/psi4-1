@@ -249,6 +249,8 @@ void PKJK::preiterations()
     transqt::yosh_init_buckets(&YBuffJ);
     transqt::yosh_init_buckets(&YBuffK);
 
+    transqt::yosh_print(&YBuffJ, "outfile");
+    transqt::yosh_print(&YBuffK, "outfile");
    //Do the pre-sorting step in temporary files
 
     //TODO: Solve the double sorting of K integrals that are not in the same
@@ -271,6 +273,17 @@ void PKJK::preiterations()
                           pk_symoffset, (debug_ > 5));
 
     tbench.stop("Creating PK file");
+    tbench.start();
+    IWL *iwl = new IWL(psio_.get(), PSIF_SO_TEI, cutoff_, 1, 1);
+    bool last_buffer;
+    do{
+        last_buffer = iwl->last_buffer();
+        if (!last_buffer) {
+            iwl->fetch();
+        }
+    } while (!last_buffer);
+    delete iwl;
+    tbench.stop("Dummy Read original IWL file");
     psio_->close(pk_file_, 1);
 
     transqt::yosh_done(&YBuffJ);
@@ -403,6 +416,17 @@ void PKJK::preiterations()
     } // End of loop over batches
     tbench.stop("PK file creation");
 
+    tread.start();
+    IWL *iwl = new IWL(psio_.get(), PSIF_SO_TEI, cutoff_, 1, 1);
+    bool last_buffer;
+    do{
+        last_buffer = iwl->last_buffer();
+        if (!last_buffer) {
+            iwl->fetch();
+        }
+    } while (!last_buffer);
+    delete iwl;
+    tread.stop("Dummy Read original IWL file");
     psio_->close(pk_file_, 1);
 
     } // End of algo conditional.

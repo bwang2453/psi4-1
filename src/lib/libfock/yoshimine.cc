@@ -205,7 +205,7 @@ void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
                                                            in 1 process space, one can store much bigger integrals files on disk ---*/
    unsigned int nbuckets;
    int i;
-   unsigned long int bytes_per_bucket, free_bytes_per_bucket;
+   unsigned long int bytes_per_bucket, free_bytes_per_bucket, bytes_per_iwl;
 
    YBuff->first_tmp_file = first_tmp_file;
    twoel_array_size = bra_indices * (bra_indices + 1) / 2;
@@ -234,10 +234,18 @@ void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
    }
    else
       bytes_per_bucket = (unsigned long int) (maxcor / nbuckets);
-//DEBUG   outfile->Printf("There are %lu bytes per buckets\n", bytes_per_bucket);
+   outfile->Printf("There are %lu bytes per buckets\n", bytes_per_bucket);
 
-   free_bytes_per_bucket = bytes_per_bucket -
-     (unsigned long int) (sizeof(struct iwlbuf) + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
+   free_bytes_per_bucket = 0;
+   bytes_per_iwl = (unsigned long int) (sizeof(struct iwlbuf) + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
+   if(bytes_per_iwl < bytes_per_bucket) {
+       free_bytes_per_bucket = bytes_per_bucket - bytes_per_iwl;
+   }
+   if(free_bytes_per_bucket < (unsigned long int) (4*sizeof(int) + sizeof(double)) * 10L ){
+       outfile->Printf("Not enough memory to store at least 10 integrals per bucket\n ");
+       tstop();
+       exit(PSI_RETURN_FAILURE);
+   }
    YBuff->bucketsize = free_bytes_per_bucket / (4 * sizeof(int) +
       sizeof(double));
    YBuff->buckets = (struct bucket *) malloc(nbuckets * sizeof(struct bucket));
@@ -715,6 +723,8 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
   iwl_buf_init(&ERIIN,itapERI,0.0,1,1);
   tread.cumulate();
 
+  long unsigned int nbuffers = 1;
+
   do {
     /* read a buffer full */
     ilsti = ERIIN.lastbuf;
@@ -821,6 +831,7 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
                           flush_bucket(bptr_K2, 0);
                           twriteK.cumulate();
                           bptr_K2->in_bucket = 0;
+//                          outfile->Printf("Flushing a K2 bucket after reading %lu buffers.\n", nbuffers);
                       }
                   }
 
@@ -832,18 +843,21 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
           flush_bucket(bptr_K1, 0);
           twriteK.cumulate();
           bptr_K1->in_bucket = 0;
+//          outfile->Printf("Flushing a K1 bucket after reading %lu buffers.\n", nbuffers);
       }
       if ((tmpi_J + 1) == YBuffJ->bucketsize) { /* need to flush bucket to disk */
           twriteJ.start();
         flush_bucket(bptr_J, 0);
         twriteJ.cumulate();
         bptr_J->in_bucket = 0;
+//          outfile->Printf("Flushing a J bucket after reading %lu buffers.\n", nbuffers);
       }
     }
     if (!ilsti) {
         tread.start();
       iwl_buf_fetch(&ERIIN);
       tread.cumulate();
+      ++nbuffers;
     }
   } while(!ilsti);
 
