@@ -234,7 +234,7 @@ void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
    }
    else
       bytes_per_bucket = (unsigned long int) (maxcor / nbuckets);
-   outfile->Printf("There are %lu bytes per buckets\n", bytes_per_bucket);
+//   outfile->Printf("There are %lu bytes per buckets\n", bytes_per_bucket);
 
    free_bytes_per_bucket = 0;
    bytes_per_iwl = (unsigned long int) (sizeof(struct iwlbuf) + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
@@ -264,7 +264,8 @@ void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
    i = 0;
    YBuff->buckets[i].lo = 0;
    YBuff->buckets[i].in_bucket = 0;
-   for(unsigned pq = 0; pq < bra_indices; ++pq) {
+   unsigned long pq;
+   for( pq = 0; i < (nbuckets - 1); ++pq) {
        // Increment counters
        if(pq_incore + pq + 1 > maxcord) {
            //The batch is full. Save info.
@@ -276,7 +277,15 @@ void yosh_init_pk(struct yoshimine *YBuff, unsigned bra_indices,
        YBuff->bucket_for_pq[pq] = i;
        pq_incore += pq + 1;
    }
+   // The last bucket may contain a little more integrals
+   // Because we include all rs for each pq in the same bucket
+   // we may accumulate a difference between the bucket size and
+   // the actual integrals stored there.
    YBuff->buckets[i].hi = bra_indices - 1;
+   for(; pq < bra_indices; ++pq) {
+       YBuff->bucket_for_pq[pq] = i;
+   }
+//   outfile->Printf("i is now %i\n", i);
 
 }
 
@@ -689,7 +698,7 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
   double value;
   int *tmp;
   struct bucket *bptr_J, *bptr_K1, *bptr_K2 ;
-  long unsigned int ij, kl, ijkl, ik, il;
+  long unsigned int ij, kl, ijkl, ik, il, jk;
   long int tmpi_J, tmpi_K1, tmpi_K2;
   int whichbucket_J, whichbucket_K1, whichbucket_K2, firstfile_J, firstfile_K;
   int fi;
@@ -746,6 +755,7 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
       jsym = so2sym[jabs];
       ksym = so2sym[kabs];
       lsym = so2sym[labs];
+//DEBUG      outfile->Printf("IWL <%d %d|%d %d>\n", iabs, jabs, kabs, labs);
 
       value = ERIIN.values[i];
       fi += 4;
@@ -809,10 +819,12 @@ void yosh_rdtwo_pk(struct yoshimine *YBuffJ, struct yoshimine *YBuffK, int itapE
                   /* Calculate il for exchange buckets */
                   il = INDEX2(irel, lrel);
                   il += pksymoff[isym];
+                  jk = INDEX2(jrel, krel);
+                  jk += pksymoff[jsym];
 
                   // outfile->Printf("ik is %i and il is %i\n", ik, il);
                   // outfile->Printf("for integral <%i %i |%i %i>", iabs, jabs, kabs, labs);
-                  whichbucket_K2 = YBuffK->bucket_for_pq[il] ;
+                  whichbucket_K2 = YBuffK->bucket_for_pq[MAX0(il,jk)] ;
                   if (whichbucket_K1 != whichbucket_K2) {
                       bptr_K2 = YBuffK->buckets + whichbucket_K2 ;
                       tmpi_K2 = (bptr_K2->in_bucket)++ ;
@@ -1385,9 +1397,10 @@ void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_b
    for(int i = 0; i < YBuff->nbuckets; ++i) {
        lopq = YBuff->buckets[i].lo;
        hipq = YBuff->buckets[i].hi + 1;
-       nintegrals = (hipq * (hipq + 1)) / 2 - (lopq * (lopq + 1) / 2);
+       nintegrals = (hipq * (hipq + 1) / 2) - (lopq * (lopq + 1) / 2);
        if (nintegrals > batch_size) batch_size = nintegrals;
    }
+//   outfile->Printf("max batch size is %lu\n", batch_size);
 
    twoel_ints = init_array(batch_size);
 
@@ -1402,7 +1415,8 @@ void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_b
               hipq, so2ind, so2sym, pksymoff, (print_lvl > 4), "outfile");
       // Since everything is in triangle form, we can totally get the size
       ++hipq;
-      nintegrals = (hipq * (hipq + 1)) / 2 - (lopq * (lopq + 1) / 2);
+      nintegrals = (hipq * (hipq + 1) / 2) - (lopq * (lopq + 1) / 2);
+   //   outfile->Printf("There are %lu integrals in this batch\n", nintegrals);
 //DEBUG      outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);
       if (is_exch) {
         sprintf(label,"K Block (Batch %d)", i);
@@ -1412,6 +1426,30 @@ void yosh_sort_pk(struct yoshimine *YBuff, int is_exch, int out_tape, int keep_b
       twrite.start();
       psio->write_entry(out_tape, label, (char*)twoel_ints, nintegrals * sizeof(double));
       twrite.stop("Writing one PK batch");
+//
+//      // Here we do some really stupid verifications.
+//      int filenum =  out_tape;
+//      outfile->Printf("Reading %lu integrals from batch %d\n", nintegrals, i);
+//      double* thisisdumb = new double[nintegrals];
+//
+//      char* testlabel  =new char[100];
+//      if (is_exch) {
+//        sprintf(testlabel,"K Block (Batch %d)", i);
+//      } else {
+//        sprintf(testlabel,"J Block (Batch %d)", i);
+//      }
+//      psio->read_entry(filenum, testlabel, (char*) thisisdumb, nintegrals * sizeof(double));
+//      for(size_t h = 0; h < nintegrals; ++h) {
+//          if(twoel_ints[h] != thisisdumb[h]) {
+//              outfile->Printf("Difference in the PK file!\n");
+//              outfile->Printf("Batch number %d, integral number %lu is %16.8f instead of %16.8f\n", i, h, twoel_ints[h], thisisdumb[h]);
+//              outfile->Printf("For file %s \n", is_exch ? "K" : "J");
+//          }
+//      }
+//      delete [] thisisdumb;
+//      delete [] testlabel;
+//      // End of the really stupid verifications
+//
       if(i < YBuff->core_loads - 1) {
         zero_arr(twoel_ints, batch_size);
       }

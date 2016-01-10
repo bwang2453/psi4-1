@@ -551,6 +551,8 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
 
    maxind = INDEX2(lpq, lpq);
 
+//   outfile->Printf("Offset is %lu and maxind is %lu.\n", offset, maxind);
+//
    lblptr = Inbuf->labels;
    valptr = Inbuf->values;
 
@@ -581,6 +583,8 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
           rsym = so2sym[rabs];
           ssym = so2sym[sabs];
 
+//DEBUG          outfile->Printf("INT <%d %d|%d %d>\n", pabs, qabs, rabs, sabs);
+
           if (!is_exch) {
 
               // We only stored integrals of the relevant symmetry
@@ -589,9 +593,9 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
               rs = INDEX2(rrel, srel);
               rs += pksymoff[rsym];
               pqrs = INDEX2(pq, rs);
-//DEBUG              if (pqrs > maxind || (pqrs < offset)) {
-//DEBUG                  outfile->Printf("pqrs is out of bounds for J\n");
-//DEBUG              }
+//DEBUG         if (pqrs > maxind || (pqrs < offset)) {
+//DEBUG             outfile->Printf("pqrs is out of bounds for J\n");
+//DEBUG         }
               ints[pqrs - offset] += valptr[Inbuf->idx];
 
           } else {
@@ -602,9 +606,12 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
                           pq = INDEX2(prel, srel);
                           pq += pksymoff[psym];
                           rs = INDEX2(qrel, rrel);
-                          rs += pksymoff[rsym];
+                          rs += pksymoff[qsym];
                           pqrs = INDEX2(pq, rs);
                           if ((pqrs <= maxind) && (pqrs >= offset)) {
+//                              if(rs > pq) {
+//                                outfile->Printf("rs > pq 2nd sort!!\n");
+//                              }
                               if(prel == srel || qrel == rrel) {
                                   ints[pqrs - offset] += valptr[Inbuf->idx];
                               } else {
@@ -619,9 +626,12 @@ void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
                   pq = INDEX2(prel, rrel);
                   pq += pksymoff[psym];
                   rs = INDEX2(qrel, srel);
-                  rs += pksymoff[ssym];
+                  rs += pksymoff[qsym];
                   pqrs = INDEX2(pq, rs);
                   if ((pqrs <= maxind) && (pqrs >= offset) ) {
+//                      if(rs > pq) {
+//                        outfile->Printf("rs > pq 1st sort!!\n");
+//                      }
                       if((prel == rrel) || (qrel == srel)) {
                           ints[pqrs - offset] += valptr[Inbuf->idx];
                       } else {

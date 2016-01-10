@@ -249,8 +249,8 @@ void PKJK::preiterations()
     transqt::yosh_init_buckets(&YBuffJ);
     transqt::yosh_init_buckets(&YBuffK);
 
-    transqt::yosh_print(&YBuffJ, "outfile");
-    transqt::yosh_print(&YBuffK, "outfile");
+//    transqt::yosh_print(&YBuffJ, "outfile");
+//    transqt::yosh_print(&YBuffK, "outfile");
    //Do the pre-sorting step in temporary files
 
     //TODO: Solve the double sorting of K integrals that are not in the same
@@ -265,10 +265,12 @@ void PKJK::preiterations()
     // Really proceed with the sorting and writing of the PK files
 
     psio_->open(pk_file_, PSIO_OPEN_NEW);
+//    psio_->open(pk_file_, PSIO_OPEN_OLD);
 
 //DEBUG    outfile->Printf("Just before sorting\n");
     transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, so2index_, so2symblk_,
                           pk_symoffset, (debug_ > 5));
+//    throw PSIEXCEPTION("Integral counting");
     transqt::yosh_sort_pk(&YBuffK, 1, pk_file_, 0, so2index_, so2symblk_,
                           pk_symoffset, (debug_ > 5));
 
@@ -340,6 +342,7 @@ void PKJK::preiterations()
                 rsym  = so2symblk_[rabs];
                 ssym  = so2symblk_[sabs];
                 value = (double) valptr[index];
+//                outfile->Printf("IWL <%d %d|%d %d>\n", pabs, qabs, rabs, sabs);
 
                 // J
                 if ((psym == qsym) && (rsym == ssym)) {
@@ -710,6 +713,7 @@ void PKJK::compute_JK()
                         double J_pq = 0.0;
                         double *J_rs = J_vector;
                         for (size_t rs = 0; rs <= pq; ++rs) {
+//                            outfile->Printf("PK int (%lu|%lu) = %20.16f\n", pq, rs, *j_ptr);
                             J_pq  += *j_ptr * (*D_rs);
                             *J_rs += *j_ptr * D_pq;
                             ++D_rs;
@@ -724,6 +728,7 @@ void PKJK::compute_JK()
             delete[] j_block;
         }
     }
+//    throw PSIEXCEPTION("Reading PK file\n");
 
     for(size_t N = 0; N < J_.size(); ++N){
         if(C_left_[N] != C_right_[N]) {
@@ -805,6 +810,7 @@ void PKJK::compute_JK()
                         double K_pq = 0.0;
                         double *K_rs = K_vector;
                         for (size_t rs = 0; rs <= pq; ++rs) {
+//                            outfile->Printf("PK int (%lu|%lu) = %20.16f\n", pq, rs, *k_ptr);
                             K_pq  += *k_ptr * (*D_rs);
                             *K_rs += *k_ptr * D_pq;
                             ++D_rs;
@@ -818,6 +824,7 @@ void PKJK::compute_JK()
             delete[] label;
             delete[] k_block;
         }
+//        throw PSIEXCEPTION("Reading K blocks\n");
     }
 
     for(size_t N = 0; N < K_.size(); ++N){
