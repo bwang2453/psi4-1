@@ -27,7 +27,7 @@
 #ifndef _psi3_bin_transqt_yoshimine_h_
 #define _psi3_bin_transqt_yoshimine_h_
 
-namespace psi { namespace transqt {
+namespace psi { 
 
 /*
 ** YOSHIMINE.H 
@@ -40,6 +40,171 @@ namespace psi { namespace transqt {
 
 /* need to include iwl.h before including this file */
 
+class BaseBucket {
+  private:
+    long int in_bucket_;
+    IWL* IWLBuf_;
+    int hi_;
+    int lo_;
+  // You should never copy a bucket, it's inefficient.
+  // Also it contains raw pointers and copying is dangerous.
+    BaseBucket(const BaseBucket& input ) {}
+    BaseBucket& operator =(const BaseBucket& input) {}
+
+  public:
+    virtual ~BaseBucket();
+    BaseBucket() : IWLBuf_(NULL) {}
+  // Accessor functions to data
+    long int& in_bucket()       { return in_bucket_; }
+    IWL* iwlbuf()               { return IWLBuf_; }
+    void set_iwlbuf(IWL* input) { IWLBuf_ = input; }
+    int& hi()                   { return hi_; }
+    int& lo()                   { return lo_; }
+
+    // Allocating bucket-owned storage
+    virtual void alloc(unsigned long int size) {};
+    // Deleting all bucket-owned storage
+    virtual void dealloc();
+    // Filling the bucket with integrals and labels
+    virtual void fill(int pin, int qin, int rin, int sin, double valin) {};
+    // Flushing the bucket to disk.
+    virtual void flush(const int lastbuf) {};
+};
+
+// Usual structure of a bucket, containing integrals and labels
+// for a certain range of indices
+class Bucket : public BaseBucket {
+  private:
+    int* p_;
+    int* q_;
+    int* r_;
+    int* s_;
+    double* val_;
+  public:
+  // Constructor and destructor
+  Bucket() : p_(NULL), q_(NULL), r_(NULL), s_(NULL), val_(NULL) {}
+  virtual ~Bucket();
+  // Accessor functions to data
+    int* p()                    { return p_; }
+    int* q()                    { return q_; }
+    int* r()                    { return r_; }
+    int* s()                    { return s_; }
+    double* val()               { return val_; }
+
+    // Allocating bucket-owned storage
+    virtual void alloc(unsigned long int size);
+    // Deleting all bucket-owned storage
+    virtual void dealloc();
+    // Filling the bucket with integrals and labels
+    virtual void fill(int pin, int qin, int rin, int sin, double valin);
+    // Flushing the buc
+    virtual void flush(const int lastbuf);
+};
+
+// A bucket containing only one array with
+// the addresses of integrals and labels it needs,
+// stored in an external array.
+class SmallBucket : public BaseBucket {
+  private:
+    unsigned long int* adr_;
+  public:
+  // Constructor and destructor
+  SmallBucket() : adr_(NULL) {}
+  virtual ~SmallBucket() {}
+  // Accessor function to data
+  unsigned long int* adr()  { return adr_; }
+  unsigned long int operator[] (const size_t idx) {
+    return adr_[idx];
+  }
+  virtual void flush(const int lastbuf);
+};
+
+// Base class for a Yoshimine object, handling
+// Yoshimine sorting of the integrals.
+// First, a pre-sorting is performed based on the
+// canonical index PQRS into different files.
+// Then, each file is read and the integrals sorted in core
+// before to be written to the PK file.
+class YoshBase {
+  private:
+    int core_loads_;
+    int nbuckets_;
+    int* bucket_for_pq_;
+    unsigned long int bucketsize_;
+    int first_tmp_file_;
+    unsigned int bra_indices_;
+    double cutoff_;
+   // boost::shared_ptr<PSIO> psio_;
+    PSIO* psio_;
+    BaseBucket* buckets_;
+
+  // Never copy this, it contains raw pointers and file pointers
+    YoshBase(const YoshBase& input) {}
+    YoshBase& operator = (const YoshBase& input) {}
+
+  protected:
+  // Constructor and destructor, only callable through derived classes
+    YoshBase(unsigned bra_idx, long maxcor, long maxcord, const int max_buckets,
+         unsigned int first_tmp_file, double cutoff, PSIO* psio);
+    virtual ~YoshBase();
+
+  public:
+  // Accessor functions
+    int& core_loads()                    {return core_loads_; }
+    int& nbuckets()                      {return nbuckets_; }
+    int* bucket_for_pq()                 {return bucket_for_pq_; }
+    unsigned long int& bucketsize()      {return bucketsize_; }
+    int& first_tmp_file()                {return first_tmp_file_; }
+    unsigned int& bra_indices()          {return bra_indices_; }
+    double& cutoff()                     {return cutoff_; }
+    BaseBucket* buckets()                {return buckets_; }
+    void set_buckets(BaseBucket* input)  {buckets_ = input; }
+    PSIO* get_psio()                     {return psio_; }
+
+  // Only the functions I need for PK are ported here right now
+
+    void init(long maxcord);
+    void print();
+    void init_buckets();
+    void close_buckets(int erase);
+    static void rdtwo_pk(YoshBase* YBuffJ, YoshBase* YBuffK, int itapERI,
+         int del_tei_file, int nirreps, int* so2rel, int* so2sym, int* pksymoff, int printflag);
+    void flush_bucket(struct bucket *bptr, int lastbuf);
+    void sort_pk(int is_exch, int out_tape, int keep_bins,
+         int* so2ind, int* so2sym, int* pksymoff, int print_lvl);
+    void done();
+    void flush();
+//    void buff_put_val(int *ioff, int pq,
+//         int p, int q, int r, int s, double value, int prtflg,
+//         std::string OutFileRMR);
+}; 
+
+// Usual Yoshimine class with usual buckets
+class Yosh : public YoshBase {
+private:
+  // Never copy this, it contains raw pointers and file pointers
+//    Yosh(const Yosh& input) {}
+//      Yosh& operator = (const Yosh& input) {}
+public:
+    // Constructor and destructor
+    Yosh(unsigned int bra_idx, long maxcor, long maxcord, const int max_buckets,
+         unsigned int first_tmp_file, double cutoff, PSIO *psio);
+    ~Yosh() {}
+};
+
+class Yoshopt : public YoshBase {
+private:
+  // Never copy this, it contains raw pointers and file pointers
+//    Yoshopt(const Yoshopt& input) {}
+//      Yoshopt& operator = (const Yoshopt& input) {}
+public:
+    // Constructor and destructor
+    Yoshopt(unsigned bra_idx, long maxcor, long maxcord, const int max_buckets,
+         unsigned int first_tmp_file, double cutoff);
+    ~Yoshopt() {}
+};
+
+namespace transqt {
 struct bucket {
    long int in_bucket;
    struct iwlbuf IWLBuf;

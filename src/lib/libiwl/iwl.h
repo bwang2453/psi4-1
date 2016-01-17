@@ -69,7 +69,7 @@ void sortbuf(struct iwlbuf *inbuf, struct iwlbuf *outbuf,
       int nbfso, int elbert, int intermediate, int no_pq_perm, 
       int qdim, int add, int printflg, std::string out);
 void sortbuf_pk(struct iwlbuf *Inbuf, int out_tape, int is_exch,
-      double *ints, int fpq, int lpq, int *so2ind, int *so2sym, int *pksymoff,
+      double *ints, unsigned int fpq, unsigned int lpq, int *so2ind, int *so2sym, int *pksymoff,
       int printflg, std::string out);
 void iwl_buf_init(struct iwlbuf *Buf, int intape, double cutoff,
       int oldfile, int readflag);
