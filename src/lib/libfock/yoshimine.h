@@ -163,13 +163,12 @@ class YoshBase {
 
   // Only the functions I need for PK are ported here right now
 
-    void init(long maxcord);
+    void init(long maxcord, unsigned int bra_idx);
     void print();
     void init_buckets();
     void close_buckets(int erase);
     static void rdtwo_pk(YoshBase* YBuffJ, YoshBase* YBuffK, int itapERI,
          int del_tei_file, int nirreps, int* so2rel, int* so2sym, int* pksymoff, int printflag);
-    void flush_bucket(struct bucket *bptr, int lastbuf);
     void sort_pk(int is_exch, int out_tape, int keep_bins,
          int* so2ind, int* so2sym, int* pksymoff, int print_lvl);
     void done();
@@ -189,7 +188,7 @@ public:
     // Constructor and destructor
     Yosh(unsigned int bra_idx, long maxcor, long maxcord, const int max_buckets,
          unsigned int first_tmp_file, double cutoff, PSIO *psio);
-    ~Yosh() {}
+    virtual ~Yosh() {}
 };
 
 class Yoshopt : public YoshBase {
@@ -205,6 +204,7 @@ public:
 };
 
 namespace transqt {
+
 struct bucket {
    long int in_bucket;
    struct iwlbuf IWLBuf;

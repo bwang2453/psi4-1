@@ -175,8 +175,6 @@ void PKJK::preiterations()
     // Use a Yoshimine sorting, with objects adapted from TRANSQT implementation
     // of Yoshimine.
 
-    struct transqt::yoshimine YBuffJ;
-    struct transqt::yoshimine YBuffK;
     int max_buckets = options.get_int("MAX_BUCKETS");
 
     // Initialize each buffer with only half of the memory. memory_ is in doubles
@@ -192,12 +190,12 @@ void PKJK::preiterations()
 
 //DEBUG    outfile->Printf("The pk_sort_mem is %li doubles, there are %i max_buckets\n", pk_sort_mem, max_buckets);
 //DEBUG    outfile->Printf("The first tmp file is %i and the integral tolerance %f\n", first_tmp_file_J, tolerance);
-    transqt::yosh_init_pk(&YBuffJ, pk_pairs_, pk_presort_mem, pk_sort_mem,
-                      max_buckets, first_tmp_file_J, tolerance, "outfile");
-    int first_tmp_file_K = first_tmp_file_J + YBuffJ.nbuckets;
+    Yosh YBuffJ(pk_pairs_, pk_presort_mem, pk_sort_mem,
+                max_buckets, first_tmp_file_J, tolerance, psio_.get());
+    int first_tmp_file_K = first_tmp_file_J + YBuffJ.nbuckets();
 //DEBUG    outfile->Printf("The first tmp K file is %i \n", first_tmp_file_K);
-    transqt::yosh_init_pk(&YBuffK, pk_pairs_, pk_presort_mem, pk_sort_mem,
-                      max_buckets, first_tmp_file_K, tolerance, "outfile");
+    Yosh YBuffK(pk_pairs_, pk_presort_mem, pk_sort_mem,
+                max_buckets, first_tmp_file_K, tolerance, psio_.get());
 
 //DEBUG    transqt::yosh_print(&YBuffJ, "outfile");
 //DEBUG    transqt::yosh_print(&YBuffK, "outfile");
@@ -206,16 +204,16 @@ void PKJK::preiterations()
     // Low and high pq indices and number of buckets should be the same
     // between J and K
 
-    int nbatches      = YBuffJ.nbuckets;
+    int nbatches      = YBuffJ.nbuckets();
     size_t totally_symmetric_pairs = pairpi[0];
     delete [] pairpi;
     batch_pq_min_.clear();
     batch_pq_max_.clear();
     batch_index_min_.clear();
     batch_index_max_.clear();
-    for(int i = 0; i < YBuffJ.nbuckets; ++i) {
-        int lowpq = YBuffJ.buckets[i].lo;
-        int hipq = YBuffJ.buckets[i].hi;
+    for(int i = 0; i < YBuffJ.nbuckets(); ++i) {
+        int lowpq = (YBuffJ.buckets())[i].lo();
+        int hipq = (YBuffJ.buckets())[i].hi();
         batch_pq_min_.push_back(lowpq);
         batch_pq_max_.push_back(++hipq);
         batch_index_min_.push_back( (size_t)(lowpq + 1L) * (size_t)lowpq / 2L);
@@ -246,8 +244,8 @@ void PKJK::preiterations()
 
     timJG tbench;
     tbench.start();
-    transqt::yosh_init_buckets(&YBuffJ);
-    transqt::yosh_init_buckets(&YBuffK);
+    YBuffJ.init_buckets();
+    YBuffK.init_buckets();
 
 //    transqt::yosh_print(&YBuffJ, "outfile");
 //    transqt::yosh_print(&YBuffK, "outfile");
@@ -255,12 +253,12 @@ void PKJK::preiterations()
 
     //TODO: Solve the double sorting of K integrals that are not in the same
     // bucket, we are writing more integrals to disk than anticipated.
-    transqt::yosh_rdtwo_pk(&YBuffJ,&YBuffK,PSIF_SO_TEI, 0, nirreps, so2index_, so2symblk_,
+    YoshBase::rdtwo_pk(&YBuffJ,&YBuffK,PSIF_SO_TEI, 0, nirreps, so2index_, so2symblk_,
                            pk_symoffset, (debug_ > 5));
 
     // Close the buckets, but keep the temp. files.
-    transqt::yosh_close_buckets(&YBuffJ, 0);
-    transqt::yosh_close_buckets(&YBuffK, 0);
+    YBuffJ.close_buckets(0);
+    YBuffK.close_buckets(0);
 
     // Really proceed with the sorting and writing of the PK files
 
@@ -268,11 +266,9 @@ void PKJK::preiterations()
 //    psio_->open(pk_file_, PSIO_OPEN_OLD);
 
 //DEBUG    outfile->Printf("Just before sorting\n");
-    transqt::yosh_sort_pk(&YBuffJ, 0, pk_file_, 0, so2index_, so2symblk_,
-                          pk_symoffset, (debug_ > 5));
+    YBuffJ.sort_pk(0, pk_file_, 0, so2index_, so2symblk_, pk_symoffset, (debug_ > 5));
 //    throw PSIEXCEPTION("Integral counting");
-    transqt::yosh_sort_pk(&YBuffK, 1, pk_file_, 0, so2index_, so2symblk_,
-                          pk_symoffset, (debug_ > 5));
+    YBuffK.sort_pk(1, pk_file_, 0, so2index_, so2symblk_, pk_symoffset, (debug_ > 5));
 
     tbench.stop("Creating PK file");
     tbench.start();
@@ -288,8 +284,8 @@ void PKJK::preiterations()
     tbench.stop("Dummy Read original IWL file");
     psio_->close(pk_file_, 1);
 
-    transqt::yosh_done(&YBuffJ);
-    transqt::yosh_done(&YBuffK);
+    YBuffJ.done();
+    YBuffK.done();
 
     } // End of condition for Yoshimine sorting, algo NEW
     else if(algo == "JET") {

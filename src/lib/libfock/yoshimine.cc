@@ -47,6 +47,7 @@
 #include <libpsio/psio.hpp>
 #include <libpsio/psio.h>
 #include <psifiles.h>
+#include <libiwl/iwl.hpp>
 #define YEXTERN
 #include "yoshimine.h"
 
@@ -54,7 +55,7 @@
 
 #include <boost/shared_ptr.hpp>
 
-namespace psi { namespace transqt {
+namespace psi {
 
 
 #define MIN0(a,b) (((a)<(b)) ? (a) : (b))
@@ -69,6 +70,626 @@ namespace psi { namespace transqt {
 #   define INDEX2(i, j) ( (i) >= (j) ? EXPLICIT_IOFF(i) + (j) : EXPLICIT_IOFF(j) + (i) )
 #endif
 
+void Bucket::alloc(unsigned long size)
+{
+    p_ = new int[size];
+    q_ = new int[size];
+    r_ = new int[size];
+    s_ = new int[size];
+    val_ = new double[size];
+}
+
+Bucket::~Bucket() {
+    if(p_) delete [] p_;
+    if(q_)  delete [] q_;
+    if(r_)  delete [] r_;
+    if(s_)  delete [] s_;
+    if(val_) delete [] val_;
+}
+
+BaseBucket::~BaseBucket() {
+    if(IWLBuf_) delete IWLBuf_;
+}
+
+void Bucket::dealloc()
+{
+    delete [] p_;
+    delete [] q_;
+    delete [] r_;
+    delete [] s_;
+    delete [] val_;
+    p_ = NULL;
+    q_ = NULL;
+    r_ = NULL;
+    s_ = NULL;
+    val_ = NULL;
+    BaseBucket::dealloc();
+}
+
+void BaseBucket::dealloc()
+{
+    delete IWLBuf_;
+    IWLBuf_ = NULL;
+}
+
+void Bucket::fill(int pin, int qin, int rin, int sin, double valin)
+{
+    p_[in_bucket()] = pin;
+    q_[in_bucket()] = qin;
+    r_[in_bucket()] = rin;
+    s_[in_bucket()] = sin;
+    val_[in_bucket()] = valin;
+
+    ++in_bucket();
+}
+
+/*
+** FLUSH_BUCKET():  This function flushes a Yoshimine bucket to a temporary
+**    binary file.  Must be careful to call with lastbuf==1 when the
+**    last buffer has been reached, so that the iwl buffer can set the
+**    `last buffer' flag on output.
+*/
+void Bucket::flush(const int lastbuf)
+{
+
+    iwlbuf()->write_array(val_, p_, q_, r_, s_, in_bucket());
+    iwlbuf()->flush(lastbuf);
+    in_bucket() = 0;
+}
+
+
+
+/*
+** YOSH_INIT_PK(): This function initializes a Yoshimine sort object for
+**                 sorting PK integrals.
+**    The data is contained in a structure YBuff.
+**
+** Parameters:
+**    YBuff          =  pointer to struct which will hold data for the object
+**    bra_indices    =  the number of bra_index pairs for the two-electron
+**                      integrals being sorted
+**    maxcor         =  the core memory, in bytes, available for all buckets
+**                       simultaneously during presorting.
+**    maxcord        =  the core memory, in doubles, available for reading in
+**                      a single presorted bucket file during sorting.
+**    max_buckets    =  the max number of buckets to use (may be limited due
+**                      to the fact that each bucket requires a consecutively
+**                      numbered binary temp file).
+**    first_tmp_file =  the number of the first tmp file used in the
+**                      Yoshimine sort (e.g. 80 for file80).
+**    cutoff         =  minimum value to be kept for any value during the sort
+**    outfile        =  the text output file
+**
+** Returns: none
+**
+** Note:  bra_indices indicates the number of pq pairs. In PK integrals, we know
+** that we have pq >= rs, p >= q and r >= s. YBuff contains buckets with
+** varying numbers of pq indices to take into account this triangular structure.
+*/
+YoshBase::YoshBase(unsigned bra_indices, long maxcor, long maxcord,
+                   const int max_buckets, unsigned int first_tmp_file,
+               double cutoff, PSIO* psio)
+{
+   unsigned long long int twoel_array_size;              /*--- Although on 32-bit systems one can only allocate 2GB arrays
+                                                           in 1 process space, one can store much bigger integrals files on disk ---*/
+   first_tmp_file_ = first_tmp_file;
+   twoel_array_size = bra_indices * (bra_indices + 1) / 2;
+   core_loads_ = (twoel_array_size - 1) / maxcord + 1 ;
+//DEBUG   outfile->Printf("nbuckets is %i\n", nbuckets );
+   nbuckets_ = core_loads_;
+   cutoff_ = cutoff;
+   bra_indices_ = bra_indices;
+   if (nbuckets_ > max_buckets) {
+      outfile->Printf( "YoshBase: maximum number of buckets exceeded\n") ;
+      outfile->Printf( "YoshBase: maximum number of buckets exceeded\n") ;
+      outfile->Printf( "   wanted %d buckets\n", nbuckets_) ;
+      tstop() ;
+      exit(PSI_RETURN_FAILURE) ;
+   }
+   psio_ = psio;
+}
+
+
+Yosh::Yosh(unsigned int bra_idx, long maxcor, long maxcord,
+           const int max_buckets, unsigned int first_tmp_file,
+           double cutoff, PSIO *psio)
+    : YoshBase(bra_idx, maxcor, maxcord, max_buckets, first_tmp_file, cutoff, psio)
+{
+
+   unsigned long long int twoel_array_size;              /*--- Although on 32-bit systems one can only allocate 2GB arrays
+                                                           in 1 process space, one can store much bigger integrals files on disk ---*/
+   int i;
+   unsigned long int bytes_per_bucket, free_bytes_per_bucket, bytes_per_iwl;
+
+   twoel_array_size = bra_idx * (bra_idx + 1) / 2;
+
+
+   if (nbuckets() == 1) {
+      bytes_per_bucket = ((unsigned long int) (4*sizeof(int) + sizeof(double))) *
+       ((unsigned long int) twoel_array_size) + (unsigned long int) (sizeof(IWL)
+       + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
+    if (bytes_per_bucket > (unsigned long int) (maxcor/nbuckets()))
+      bytes_per_bucket = (unsigned long int) (maxcor / nbuckets());
+   }
+   else
+      bytes_per_bucket = (unsigned long int) (maxcor / nbuckets());
+//   outfile->Printf("There are %lu bytes per buckets\n", bytes_per_bucket);
+
+   free_bytes_per_bucket = 0;
+   bytes_per_iwl = (unsigned long int) (sizeof(IWL) + IWL_INTS_PER_BUF * (4*sizeof(Label) + sizeof(Value)));
+   if(bytes_per_iwl < bytes_per_bucket) {
+       free_bytes_per_bucket = bytes_per_bucket - bytes_per_iwl;
+   }
+   if(free_bytes_per_bucket < (unsigned long int) (4*sizeof(int) + sizeof(double)) * 10L ){
+       outfile->Printf("Not enough memory to store at least 10 integrals per bucket\n ");
+       tstop();
+       exit(PSI_RETURN_FAILURE);
+   }
+   bucketsize() = free_bytes_per_bucket / (4 * sizeof(int) +
+      sizeof(double));
+   set_buckets(new Bucket[nbuckets()]);
+
+   init(maxcord, bra_idx);
+
+}
+
+void YoshBase::init(long maxcord, unsigned int bra_idx)
+{
+
+    bucket_for_pq_ = new int[bra_idx];
+
+   /* Now we determine which buckets have which pq indices. Since we have
+    * integrals in triangular form, low pq indices have very few rs indices,
+    * thus buckets will have varying numbers of pq indices to handle.
+    */
+
+   // I *think* all of this should work the same for J and K
+   // sorting
+   unsigned long long int pq_incore = 0;
+   int i = 0;
+   buckets_[i].lo() = 0;
+   buckets_[i].in_bucket() = 0;
+   unsigned long pq;
+   for( pq = 0; i < (nbuckets_ - 1); ++pq) {
+       // Increment counters
+       if(pq_incore + pq + 1 > maxcord) {
+           //The batch is full. Save info.
+           buckets_[i++].hi() = pq - 1;
+           buckets_[i].in_bucket() = 0;
+           buckets_[i].lo() = pq;
+           pq_incore = 0;
+       }
+       bucket_for_pq_[pq] = i;
+       pq_incore += pq + 1;
+   }
+   // The last bucket may contain a little more integrals
+   // Because we include all rs for each pq in the same bucket
+   // we may accumulate a difference between the bucket size and
+   // the actual integrals stored there.
+   buckets_[i].hi() = bra_idx - 1;
+   for(; pq < bra_idx; ++pq) {
+       bucket_for_pq_[pq] = i;
+   }
+//   outfile->Printf("i is now %i\n", i);
+
+}
+
+void YoshBase::init_buckets()
+{
+
+   for (int i=0; i<(nbuckets_); i++) {
+//      YBuff->buckets[i].p = init_int_array(YBuff->bucketsize);
+//      YBuff->buckets[i].q = init_int_array(YBuff->bucketsize);
+//      YBuff->buckets[i].r = init_int_array(YBuff->bucketsize);
+//      YBuff->buckets[i].s = init_int_array(YBuff->bucketsize);
+//      YBuff->buckets[i].val = init_array(YBuff->bucketsize);
+       buckets_[i].alloc(bucketsize_);
+       buckets_[i].set_iwlbuf(new IWL(psio_, first_tmp_file_ + i, cutoff_, 0, 0));
+      }
+}
+
+/*
+** YOSH_RDTWO_PK() : Read two-electron integrals from
+**    file33 (in IWL format) and prepare them for Yoshimine sorting
+**    for PK integrals.
+**
+**    We need to sort Coulomb using ij indices, but exchange using
+**    ik and il indices, thus we need two Yoshimine objects, and we
+**    write to two sets of temporary files, while only reading the
+**    integral file once.
+**
+** Arguments:
+**   YBuffJ       = Yoshimine object pointer for Coulomb integrals
+**   YBuffK       = Yoshimine object pointer for exchange integrals
+**   itapERI      = unit number for two el. file (33)
+**   nirreps      = number of irreps
+**   so2rel       = array mapping absolute basis function index to relative
+**                  basis function index within an irrep, so2rel[abs] = rel
+**   so2sym       = array mapping absolute basis function index to irrep
+**                  number, so2sym[abs] = sym
+**   pksymoff     = array containing the offset in each irrep to convert a
+**                  pq index computed with relative indices to an absolute
+**                  pq index, pqrel = ioff[prel] + qrel, pqabs = pqrel + pksymoff[psym]
+**   ioff         = standard lexical index array
+**   del_tei_file = 1 to delete the tei file (33), 0 otherwise
+**   printflag    = 1 for printing (for debugging only!) else 0
+*/
+void YoshBase::rdtwo_pk(YoshBase *YBuffJ, YoshBase *YBuffK, int itapERI,
+      int del_tei_file, int nirreps, int* so2rel, int* so2sym, int* pksymoff, int printflag)
+{
+  int ilsti, nbuf;
+  int i;
+  int iabs, jabs, kabs, labs ;
+  int irel, jrel, krel, lrel;
+  int isym, jsym, ksym, lsym;
+  double value;
+  BaseBucket *bptr_J, *bptr_K1, *bptr_K2 ;
+  long unsigned int ij, kl, ijkl, ik, il, jk;
+  long int tmpi_J, tmpi_K1, tmpi_K2;
+  int whichbucket_J, whichbucket_K1, whichbucket_K2, firstfile_J, firstfile_K;
+  int fi;
+//DEBUG  int* num_int_J;
+//DEBUG  int* num_int_K;
+
+//DEBUG  num_int_J = init_int_array(YBuffJ->nbuckets);
+//DEBUG  num_int_K = init_int_array(YBuffK->nbuckets);
+//DEBUG
+//DEBUG  for(int h  = 0; h < YBuffJ->nbuckets; ++h) {
+//DEBUG      num_int_J[h] = 0;
+//DEBUG  }
+//DEBUG  for(int h  = 0; h < YBuffK->nbuckets; ++h) {
+//DEBUG      num_int_K[h] = 0;
+//DEBUG  }
+
+  timJG tread;
+  timJG twriteJ;
+  timJG twriteK;
+
+  if (printflag) {
+    outfile->Printf( "Yoshimine rdtwo routine entered\n");
+    outfile->Printf( "Two-electron integrals from file%d:\n",itapERI);
+  }
+
+  firstfile_J = YBuffJ->first_tmp_file();
+  firstfile_K = YBuffK->first_tmp_file();
+
+  tread.start();
+  IWL* ERIIN = new IWL(YBuffJ->get_psio(), itapERI, 0.0, 1, 1);
+  tread.cumulate();
+
+  long unsigned int nbuffers = 1;
+
+  do {
+    /* read a buffer full */
+    ilsti = ERIIN->last_buffer();
+    nbuf = ERIIN->buffer_count();
+
+    fi = 0;
+    for (i=0; i < nbuf ; i++) { /* do funky stuff to unpack ints */
+      iabs = abs(ERIIN->labels()[fi]);
+      jabs = ERIIN->labels()[fi+1];
+      kabs = ERIIN->labels()[fi+2];
+      labs = ERIIN->labels()[fi+3];
+
+      irel = so2rel[iabs];
+      jrel = so2rel[jabs];
+      krel = so2rel[kabs];
+      lrel = so2rel[labs];
+
+      isym = so2sym[iabs];
+      jsym = so2sym[jabs];
+      ksym = so2sym[kabs];
+      lsym = so2sym[labs];
+//DEBUG      outfile->Printf("IWL <%d %d|%d %d>\n", iabs, jabs, kabs, labs);
+
+      value = ERIIN->values()[i];
+      fi += 4;
+
+      // K for first sort IKJL
+      if ((isym == ksym) && (jsym == lsym)) {
+          /* Calculate ik for exchange buckets */
+          ik = INDEX2(irel, krel);
+          ik += pksymoff[isym];
+
+          /* figure out what bucket to put it in, and do so
+           */
+
+          whichbucket_K1 = YBuffK->bucket_for_pq()[ik] ;
+
+          bptr_K1= YBuffK->buckets() + whichbucket_K1 ;
+          tmpi_K1 = bptr_K1->in_bucket() ;
+
+          // Fill the first exchange bucket
+          bptr_K1->fill(iabs, jabs, kabs, labs, value);
+
+//DEBUG          num_int_K[whichbucket_K1]++;
+      }
+
+
+      // We need the symmetry offset to get pqrs properly.
+      if((isym == jsym) && (ksym == lsym)) {
+          /* calculate ijkl lexical index */
+          ij = INDEX2(irel, jrel);
+          ij += pksymoff[isym];
+          kl = INDEX2(krel, lrel);
+          kl += pksymoff[ksym];
+          // ijkl only here for debug printing
+          ijkl = INDEX2(ij, kl);
+          whichbucket_J = YBuffJ->bucket_for_pq()[ij] ;
+          bptr_J = YBuffJ->buckets() + whichbucket_J ;
+          tmpi_J = bptr_J->in_bucket() ;
+
+          // Fill the Coulomb bucket
+          bptr_J->fill(iabs, jabs, kabs, labs, value);
+//DEBUG          num_int_J[whichbucket_J]++;
+
+          if (printflag)
+            outfile->Printf( "%4d %4d %4d %4d  %4d   %10.6lf\n",
+                    iabs, jabs, kabs, labs, ijkl, value) ;
+
+          // Now we do the second sort for K (ILJK), which should
+          // be in there for symmetry reasons.
+
+          if((irel != jrel) && (krel != lrel)) {
+              if((isym == lsym) && (jsym == ksym)) {
+                  /* Calculate il for exchange buckets */
+                  il = INDEX2(irel, lrel);
+                  il += pksymoff[isym];
+                  jk = INDEX2(jrel, krel);
+                  jk += pksymoff[jsym];
+
+                  // outfile->Printf("ik is %i and il is %i\n", ik, il);
+                  // outfile->Printf("for integral <%i %i |%i %i>", iabs, jabs, kabs, labs);
+                  whichbucket_K2 = YBuffK->bucket_for_pq()[MAX0(il,jk)] ;
+                  if (whichbucket_K1 != whichbucket_K2) {
+                      bptr_K2 = YBuffK->buckets() + whichbucket_K2 ;
+                      tmpi_K2 = bptr_K2->in_bucket() ;
+
+                      //outfile->Printf("We do not skip\n");
+                      bptr_K2->fill(iabs, jabs, kabs, labs, value);
+//DEBUG                      num_int_K[whichbucket_K2]++;
+
+                      if ((tmpi_K2 + 1) == YBuffK->bucketsize()) { /* need to flush bucket to disk */
+                          twriteK.start();
+                          bptr_K2->flush(0);
+                          twriteK.cumulate();
+//                          outfile->Printf("Flushing a K2 bucket after reading %lu buffers.\n", nbuffers);
+                      }
+                  }
+
+              }
+          }
+      }
+      if ((tmpi_K1 + 1) == YBuffK->bucketsize()) { /* need to flush bucket to disk */
+          twriteK.start();
+          bptr_K1->flush(0);
+          twriteK.cumulate();
+//          outfile->Printf("Flushing a K1 bucket after reading %lu buffers.\n", nbuffers);
+      }
+      if ((tmpi_J + 1) == YBuffJ->bucketsize()) { /* need to flush bucket to disk */
+          twriteJ.start();
+          bptr_J->flush(0);
+        twriteJ.cumulate();
+//          outfile->Printf("Flushing a J bucket after reading %lu buffers.\n", nbuffers);
+      }
+    }
+    if (!ilsti) {
+        tread.start();
+        ERIIN->fetch();
+      tread.cumulate();
+      ++nbuffers;
+    }
+  } while(!ilsti);
+
+  /* flush partially filled buckets */
+  // TODO: For PK, we never use matrix so we could fix that.
+  /* Ok, after "matrix" was added above, we ran into the possibility of
+   * flushing TWO buffers with the lastflag set.  This would be bad,
+   * because the second buffer would never be read.  Therefore, I have
+   * always passed a lastflag of 0 to flush_bucket() in the code above,
+   * and now I flush all buckets here with lastflag set to 1.  There
+   * is a small possibility that I will write a buffer of all zeroes.
+   * This should not actually cause a problem, the way the iwl buf reads
+   * currently work.  Make sure to be careful if rewriting iwl routines!
+   */
+  for (i=0; i<YBuffJ->nbuckets(); i++) {
+      twriteJ.start();
+      (YBuffJ->buckets())[i].flush(1);
+    twriteJ.cumulate();
+  }
+
+  for (i=0; i<YBuffK->nbuckets(); i++) {
+      twriteK.start();
+      (YBuffK->buckets())[i].flush(1);
+    twriteK.cumulate();
+  }
+
+//DEBUG  for (int h = 0; h < YBuffJ->nbuckets; ++h) {
+//DEBUG      outfile->Printf("We wrote %i integrals in J bucket %i\n", num_int_J[h], h);
+//DEBUG  }
+//DEBUG  for (int h = 0; h < YBuffK->nbuckets; ++h) {
+//DEBUG      outfile->Printf("We wrote %i integrals in K bucket %i\n", num_int_K[h], h);
+//DEBUG  }
+
+//DEBUG  free(num_int_J);
+//DEBUG  free(num_int_K);
+
+  tread.start();
+  ERIIN->set_keep_flag(!del_tei_file);
+  delete ERIIN;
+  tread.cumulate();
+  tread.print("Read original IWL file");
+
+  twriteJ.print("J IWL bucket write");
+  twriteK.print("K IWL bucket write");
+}
+
+/*
+** YOSH_CLOSE_BUCKETS(): Close the temporary binary files used for the
+** Yoshimine sort (not the final output file).
+**
+** Arguments:
+**    YBuff   =  pointer to yoshimine object
+**    erase   =  1 to erase tmp files, else 0
+**
+** Returns: none
+**
+** This function was formerly called yosh_close_tmp_files().
+*/
+void YoshBase::close_buckets(int erase)
+{
+
+   timJG tclose;
+   tclose.start();
+   for (int i=0; i<nbuckets(); i++) { /* close but keep */
+      buckets()[i].iwlbuf()->set_keep_flag(!erase);
+      buckets()[i].dealloc();
+      }
+   tclose.stop("Time to close IWL buckets");
+}
+
+/*
+** YOSH_SORT_PK(): Sort all the buckets in the Yoshimine sorting algorithm.
+**    The call to sortbuf_pk() will cause the intermediate files to be
+**    deleted unless keep_bins is set to 1.
+**    The sorting for Coulomb and exchange integrals is not exactly the same, thus the
+**    flag is_exch has to be set to true for the exchange matrix.
+**    The integrals are ordered as ij >= kl; i >= j and k >= l, with appropriate
+**    factors for diagonal elements. In addition, integrals are written directly
+**    to the PK file without labels.
+**
+** Arguments:
+**    YBuff        =  pointer to Yoshimine object
+**    is_exch      =  flag set to true if we are sorting for
+**                    the exchange matrix
+**    out_tape     =  number for binary output file
+**    keep_bins    =  keep the intermediate tmp files
+**    so2rel       =  array mapping absolute basis function index to relative
+**                    basis function index within an irrep, so2rel[abs] = rel
+**    so2sym       =  array mapping absolute basis function index to irrep
+**                    number, so2sym[abs] = sym
+**    pksymoff     =  array containing the offset in each irrep to convert a
+**                    pq index computed with relative indices to an absolute
+**                    pq index, pqrel = ioff[prel] + qrel, pqabs = pqrel + pksymoff[psym]
+**    ioff         =  the usual offset array
+**    num_so       =  number of basis fns per irrep
+**    ket_indices  =  number of ket indices (usually ntri)
+**    qdim         =  the number of possible values for index q
+**    print_lvl    =  verbosity level (how much to print)
+**    outfile      =  text output file
+**
+** Returns: none
+*/
+void YoshBase::sort_pk(int is_exch, int out_tape, int keep_bins,
+                       int *so2ind, int *so2sym, int *pksymoff,
+                       int print_lvl)
+{
+   size_t batch_size = 0;
+   size_t hipq, lopq, nintegrals;
+   double *twoel_ints;
+   int i;
+   char* label = new char[100];
+
+   timJG twrite;
+   timJG tread;
+   // We compute the maximum batch size
+   for(int i = 0; i < nbuckets(); ++i) {
+       lopq = buckets()[i].lo();
+       hipq = buckets()[i].hi() + 1;
+       nintegrals = (hipq * (hipq + 1) / 2) - (lopq * (lopq + 1) / 2);
+       if (nintegrals > batch_size) batch_size = nintegrals;
+   }
+//   outfile->Printf("max batch size is %lu\n", batch_size);
+
+   twoel_ints = init_array(batch_size);
+
+   for (i = 0; i < core_loads(); i++) {
+      if (print_lvl > 1) outfile->Printf( "Sorting bin %d\n", i+1);
+      lopq = buckets()[i].lo();
+      hipq = buckets()[i].hi();
+      tread.start();
+      IWL* inbuf = new IWL(psio_, first_tmp_file_ + i, cutoff_, 1, 0);
+      tread.cumulate();
+      IWL::sort_buffer_pk(inbuf, out_tape, is_exch, twoel_ints, lopq,
+                          hipq, so2ind, so2sym, pksymoff, (print_lvl > 4), "outfile");
+      // Since everything is in triangle form, we can totally get the size
+      ++hipq;
+      nintegrals = (hipq * (hipq + 1) / 2) - (lopq * (lopq + 1) / 2);
+   //   outfile->Printf("There are %lu integrals in this batch\n", nintegrals);
+//DEBUG      outfile->Printf("Batch number %i, nintegrals is %i\n", i, nintegrals);
+      if (is_exch) {
+        sprintf(label,"K Block (Batch %d)", i);
+      } else {
+        sprintf(label,"J Block (Batch %d)", i);
+      }
+      twrite.start();
+      psio_->write_entry(out_tape, label, (char*)twoel_ints, nintegrals * sizeof(double));
+      twrite.stop("Writing one PK batch");
+//
+//      // Here we do some really stupid verifications.
+//      int filenum =  out_tape;
+//      outfile->Printf("Reading %lu integrals from batch %d\n", nintegrals, i);
+//      double* thisisdumb = new double[nintegrals];
+//
+//      char* testlabel  =new char[100];
+//      if (is_exch) {
+//        sprintf(testlabel,"K Block (Batch %d)", i);
+//      } else {
+//        sprintf(testlabel,"J Block (Batch %d)", i);
+//      }
+//      psio->read_entry(filenum, testlabel, (char*) thisisdumb, nintegrals * sizeof(double));
+//      for(size_t h = 0; h < nintegrals; ++h) {
+//          if(twoel_ints[h] != thisisdumb[h]) {
+//              outfile->Printf("Difference in the PK file!\n");
+//              outfile->Printf("Batch number %d, integral number %lu is %16.8f instead of %16.8f\n", i, h, twoel_ints[h], thisisdumb[h]);
+//              outfile->Printf("For file %s \n", is_exch ? "K" : "J");
+//          }
+//      }
+//      delete [] thisisdumb;
+//      delete [] testlabel;
+//      // End of the really stupid verifications
+//
+      if(i < core_loads_ - 1) {
+        zero_arr(twoel_ints, batch_size);
+      }
+      tread.start();
+      inbuf->set_keep_flag(keep_bins);
+      delete inbuf;
+      tread.cumulate();
+   }
+   tread.print("Opening/closing IWL buckets");
+
+
+   if (print_lvl > 1) outfile->Printf( "Done sorting.\n");
+
+   free(twoel_ints);
+   delete [] label;
+}
+
+/* YOSH_DONE(): Free allocated memory and reset all options for a
+** given Yoshimine sorting structure.
+*/
+void YoshBase::done()
+{
+  core_loads_ = 0;
+  nbuckets_ = 0;
+  delete [] bucket_for_pq_;
+  bucket_for_pq_ = NULL;
+  bucketsize_ = 0;
+  delete [] buckets_;
+  buckets_ = NULL;
+  first_tmp_file_ = 0;
+  bra_indices_ = 0;
+  cutoff_ = 0;
+}
+
+YoshBase::~YoshBase() {
+    if(bucket_for_pq_) delete [] bucket_for_pq_;
+    if(buckets_) delete [] buckets_;
+}
+
+
+namespace transqt {
 /*
 ** YOSH_INIT(): This function initializes a Yoshimine sort object.
 **    The data is contained in a structure YBuff.
