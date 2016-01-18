@@ -227,7 +227,9 @@ Yosh::Yosh(unsigned int bra_idx, long maxcor, long maxcord,
    }
    bucketsize() = free_bytes_per_bucket / (4 * sizeof(int) +
       sizeof(double));
-   set_buckets(new Bucket[nbuckets()]);
+   for (i = 0; i < nbuckets(); ++i) {
+       buckets().push_back(new Bucket);
+   }
 
    init(maxcord, bra_idx);
 
@@ -247,16 +249,16 @@ void YoshBase::init(long maxcord, unsigned int bra_idx)
    // sorting
    unsigned long long int pq_incore = 0;
    int i = 0;
-   buckets_[i].lo() = 0;
-   buckets_[i].in_bucket() = 0;
+   buckets_[i]->lo() = 0;
+   buckets_[i]->in_bucket() = 0;
    unsigned long pq;
    for( pq = 0; i < (nbuckets_ - 1); ++pq) {
        // Increment counters
        if(pq_incore + pq + 1 > maxcord) {
            //The batch is full. Save info.
-           buckets_[i++].hi() = pq - 1;
-           buckets_[i].in_bucket() = 0;
-           buckets_[i].lo() = pq;
+           buckets_[i++]->hi() = pq - 1;
+           buckets_[i]->in_bucket() = 0;
+           buckets_[i]->lo() = pq;
            pq_incore = 0;
        }
        bucket_for_pq_[pq] = i;
@@ -266,7 +268,7 @@ void YoshBase::init(long maxcord, unsigned int bra_idx)
    // Because we include all rs for each pq in the same bucket
    // we may accumulate a difference between the bucket size and
    // the actual integrals stored there.
-   buckets_[i].hi() = bra_idx - 1;
+   buckets_[i]->hi() = bra_idx - 1;
    for(; pq < bra_idx; ++pq) {
        bucket_for_pq_[pq] = i;
    }
@@ -283,8 +285,8 @@ void YoshBase::init_buckets()
 //      YBuff->buckets[i].r = init_int_array(YBuff->bucketsize);
 //      YBuff->buckets[i].s = init_int_array(YBuff->bucketsize);
 //      YBuff->buckets[i].val = init_array(YBuff->bucketsize);
-       buckets_[i].alloc(bucketsize_);
-       buckets_[i].set_iwlbuf(new IWL(psio_, first_tmp_file_ + i, cutoff_, 0, 0));
+       buckets_[i]->alloc(bucketsize_);
+       buckets_[i]->set_iwlbuf(new IWL(psio_, first_tmp_file_ + i, cutoff_, 0, 0));
       }
 }
 
@@ -396,7 +398,7 @@ void YoshBase::rdtwo_pk(YoshBase *YBuffJ, YoshBase *YBuffK, int itapERI,
 
           whichbucket_K1 = YBuffK->bucket_for_pq()[ik] ;
 
-          bptr_K1= YBuffK->buckets() + whichbucket_K1 ;
+          bptr_K1= YBuffK->buckets()[whichbucket_K1] ;
           tmpi_K1 = bptr_K1->in_bucket() ;
 
           // Fill the first exchange bucket
@@ -416,7 +418,7 @@ void YoshBase::rdtwo_pk(YoshBase *YBuffJ, YoshBase *YBuffK, int itapERI,
           // ijkl only here for debug printing
           ijkl = INDEX2(ij, kl);
           whichbucket_J = YBuffJ->bucket_for_pq()[ij] ;
-          bptr_J = YBuffJ->buckets() + whichbucket_J ;
+          bptr_J = YBuffJ->buckets()[whichbucket_J] ;
           tmpi_J = bptr_J->in_bucket() ;
 
           // Fill the Coulomb bucket
@@ -442,7 +444,7 @@ void YoshBase::rdtwo_pk(YoshBase *YBuffJ, YoshBase *YBuffK, int itapERI,
                   // outfile->Printf("for integral <%i %i |%i %i>", iabs, jabs, kabs, labs);
                   whichbucket_K2 = YBuffK->bucket_for_pq()[MAX0(il,jk)] ;
                   if (whichbucket_K1 != whichbucket_K2) {
-                      bptr_K2 = YBuffK->buckets() + whichbucket_K2 ;
+                      bptr_K2 = YBuffK->buckets()[whichbucket_K2] ;
                       tmpi_K2 = bptr_K2->in_bucket() ;
 
                       //outfile->Printf("We do not skip\n");
@@ -494,13 +496,13 @@ void YoshBase::rdtwo_pk(YoshBase *YBuffJ, YoshBase *YBuffK, int itapERI,
    */
   for (i=0; i<YBuffJ->nbuckets(); i++) {
       twriteJ.start();
-      (YBuffJ->buckets())[i].flush(1);
+      (YBuffJ->buckets())[i]->flush(1);
     twriteJ.cumulate();
   }
 
   for (i=0; i<YBuffK->nbuckets(); i++) {
       twriteK.start();
-      (YBuffK->buckets())[i].flush(1);
+      (YBuffK->buckets())[i]->flush(1);
     twriteK.cumulate();
   }
 
@@ -542,8 +544,8 @@ void YoshBase::close_buckets(int erase)
    timJG tclose;
    tclose.start();
    for (int i=0; i<nbuckets(); i++) { /* close but keep */
-      buckets()[i].iwlbuf()->set_keep_flag(!erase);
-      buckets()[i].dealloc();
+      buckets()[i]->iwlbuf()->set_keep_flag(!erase);
+      buckets()[i]->dealloc();
       }
    tclose.stop("Time to close IWL buckets");
 }
@@ -594,8 +596,8 @@ void YoshBase::sort_pk(int is_exch, int out_tape, int keep_bins,
    timJG tread;
    // We compute the maximum batch size
    for(int i = 0; i < nbuckets(); ++i) {
-       lopq = buckets()[i].lo();
-       hipq = buckets()[i].hi() + 1;
+       lopq = buckets()[i]->lo();
+       hipq = buckets()[i]->hi() + 1;
        nintegrals = (hipq * (hipq + 1) / 2) - (lopq * (lopq + 1) / 2);
        if (nintegrals > batch_size) batch_size = nintegrals;
    }
@@ -605,8 +607,8 @@ void YoshBase::sort_pk(int is_exch, int out_tape, int keep_bins,
 
    for (i = 0; i < core_loads(); i++) {
       if (print_lvl > 1) outfile->Printf( "Sorting bin %d\n", i+1);
-      lopq = buckets()[i].lo();
-      hipq = buckets()[i].hi();
+      lopq = buckets()[i]->lo();
+      hipq = buckets()[i]->hi();
       tread.start();
       IWL* inbuf = new IWL(psio_, first_tmp_file_ + i, cutoff_, 1, 0);
       tread.cumulate();
@@ -671,13 +673,15 @@ void YoshBase::sort_pk(int is_exch, int out_tape, int keep_bins,
 */
 void YoshBase::done()
 {
+  for(int i = 0; i < nbuckets_; ++i) {
+      delete buckets_[i];
+  }
+  buckets_.clear();
   core_loads_ = 0;
   nbuckets_ = 0;
   delete [] bucket_for_pq_;
   bucket_for_pq_ = NULL;
   bucketsize_ = 0;
-  delete [] buckets_;
-  buckets_ = NULL;
   first_tmp_file_ = 0;
   bra_indices_ = 0;
   cutoff_ = 0;
@@ -685,7 +689,12 @@ void YoshBase::done()
 
 YoshBase::~YoshBase() {
     if(bucket_for_pq_) delete [] bucket_for_pq_;
-    if(buckets_) delete [] buckets_;
+    if(buckets_.size() != 0) {
+        for(int i = 0; i < buckets_.size(); ++i) {
+            delete buckets_[i];
+        }
+        buckets_.clear();
+    }
 }
 
 

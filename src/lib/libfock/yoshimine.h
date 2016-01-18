@@ -136,7 +136,7 @@ class YoshBase {
     double cutoff_;
    // boost::shared_ptr<PSIO> psio_;
     PSIO* psio_;
-    BaseBucket* buckets_;
+    std::vector<BaseBucket*> buckets_;
 
   // Never copy this, it contains raw pointers and file pointers
     YoshBase(const YoshBase& input) {}
@@ -157,8 +157,7 @@ class YoshBase {
     int& first_tmp_file()                {return first_tmp_file_; }
     unsigned int& bra_indices()          {return bra_indices_; }
     double& cutoff()                     {return cutoff_; }
-    BaseBucket* buckets()                {return buckets_; }
-    void set_buckets(BaseBucket* input)  {buckets_ = input; }
+    std::vector<BaseBucket*>& buckets()  {return buckets_; }
     PSIO* get_psio()                     {return psio_; }
 
   // Only the functions I need for PK are ported here right now

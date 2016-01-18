@@ -212,8 +212,8 @@ void PKJK::preiterations()
     batch_index_min_.clear();
     batch_index_max_.clear();
     for(int i = 0; i < YBuffJ.nbuckets(); ++i) {
-        int lowpq = (YBuffJ.buckets())[i].lo();
-        int hipq = (YBuffJ.buckets())[i].hi();
+        int lowpq = (YBuffJ.buckets())[i]->lo();
+        int hipq = (YBuffJ.buckets())[i]->hi();
         batch_pq_min_.push_back(lowpq);
         batch_pq_max_.push_back(++hipq);
         batch_index_min_.push_back( (size_t)(lowpq + 1L) * (size_t)lowpq / 2L);
@@ -290,6 +290,11 @@ void PKJK::preiterations()
     } // End of condition for Yoshimine sorting, algo NEW
     else if(algo == "JET") {
         // Here we go for the old algorithm
+
+    // We can dismiss the Yoshimine buckets
+
+    YBuffJ.done();
+    YBuffK.done();
 
     // We might want to only build p in future...
     bool build_k = true;
